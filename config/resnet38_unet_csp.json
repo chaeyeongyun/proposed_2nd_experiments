@@ -1,0 +1,30 @@
+{   
+    "num_classes":3,
+    "pixel_to_label":{
+        "0":0,
+        "128":1,
+        "255":2
+    },
+    "resize":512,
+    "backbone":{
+        "name":"resnet38",
+        "init_weights":true,
+        "in_channels":3
+    },
+    "seg_head":{
+        "name":"unet"
+    },
+    "train":{
+        "data_dir":"/content/data/semi_sup_data/CWFID",
+        "save_dir":"/content/drive/MyDrive/semi_sup_train/CWFID",
+        "device":0,
+        "num_epochs":400,
+        "batch_size":2,
+        "init_lr":1e-4,
+        "resume":null,
+        "save_img":true,
+        "save_txt":true,
+        "save_graph":true,
+        "save_csv":true
+    }
+}
