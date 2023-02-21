@@ -6,17 +6,57 @@ from PIL import Image
 import torch
 from torch.utils.data import Dataset
 import torchvision.transforms.functional as TF
+import torch.nn.functional as F
 
-from utils import img_to_label
+from utils.processing import img_to_label
 
+class BaseDataset(Dataset):
+    def __init__(self, data_dir, split, resize=None):
+        super().__init__()
+        if type(resize)==int:
+            self.resize = (resize, resize)
+        elif type(resize) in [tuple, list]:
+            self.resize = resize
+        else:
+            raise ValueError(f"It's invalid type of resize {type(resize)}")
+        
+        self.img_dir = os.path.join(data_dir, 'input')
+        if split == 'labelled':
+            self.filenames = os.listdir(os.path.join(data_dir, 'target'))
+            self.target_dir = os.path.join(data_dir, 'target')
+        elif split == 'unlabelled':
+            self.filenames = set(os.listdir(os.path.join(data_dir, 'input'))) - set(os.listdir(os.path.join(data_dir, 'target')))
+            self.target_dir = None
+        else:
+            raise ValueError(f"split has to be labelled or unlabelled")
+        
+    def __len__(self):
+        return len(self.filenames)
+    
+    def __getitem__(self, index):
+        filename = self.filenames[index]
+        img = TF.to_tensor(Image.open(os.path.join(self.img_dir, filename)))
+        if self.target_dir != None:
+            target = TF.to_tensor(Image.open(os.path.join(self.target_dir, filename)))
+        else:
+            target = None    
+        
+        if self.resize != None:
+            img = F.interpolate(img, self.resize, mode='bilinear')
+            target = F.interpolate(target, self.resize, mode='nearest') if target != None else None
+        
+        return {'filename':filename, 'img':img, 'target':target}
+        
 class SemiSupDataset(Dataset):
-    def __init__(self, data_dir) :
+    def __init__(self, data_dir, resize=None) :
         super().__init__()
         self.img_dir = os.path.join(data_dir, 'input')
         self.target_dir = os.path.join(data_dir, 'target')
         all_imgs = os.listdir(self.img_dir)
         self.targets = os.listdir(os.path.join(data_dir, 'target'))
         self.unlab_imgs = list(set(all_imgs) - set(self.targets)) # unlabelled images
+        
+        self.resize = resize
     def __len__(self):
         return len(self.targets) + len(self.unlab_imgs)
     def __getitem__(self, index) :
@@ -29,6 +69,10 @@ class SemiSupDataset(Dataset):
         sup_img = TF.to_tensor(unlab_img)
         sup_target = torch.from_numpy(np.array(sup_target))
         
+        if self.resize is not None:
+            unlab_img = F.interpolate(unlab_img, self.resize, mode='bilinear')
+            sup_img = F.interpolate(sup_img, self.resize, mode='bilinear')
+            sup_target = F.interpolate(sup_target, self.resize, mode='bilinear')
         # transforms
         # if self.randomaug:
             # aug = random.randint(0, 7)
