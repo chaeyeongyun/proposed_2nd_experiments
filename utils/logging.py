@@ -1,3 +1,4 @@
+import torch 
 import wandb
 from typing import List
 
@@ -9,9 +10,9 @@ class Logger():
                 #    tags = ["csp+unet+cutmix"]
                 )
         # config setting
-        d = {}
+        self.config_dict = dict()
         for key in cfg.train.wandb_config:
-            d[key] = cfg.train[key]
+            self.config_dict[key] = cfg.train[key]
         
         for i in cfg.train.wandb_metrics:
             if i in ["loss"]:
@@ -19,10 +20,31 @@ class Logger():
             if i in ["miou"]:
                 wandb.define_metric(i, summary='max')
         
-    def logging(self, log_dict, epoch):
-        wandb.log(log_dict, step=epoch)
-        
+        # initialize log dict
+        self.log_dict = dict()
+        for key in cfg.wandb_logging:
+            self.log_dict[key] = None
+            
+    def logging(self, epoch):
+        wandb.log(self.log_dict, step=epoch)
+    
+    def config_update(self):
+        wandb.config.update(self.config_dict)
     
     # def end(self, summary_dict):
     #     for key, value in summary_dict.items():
     #         wandb.run.summary[key] = value
+def save_ckpoints(model_1, model_2, epoch, batch_idx, optimizer_1, optimizer_2, filepath):
+    torch.save({'model_1':model_1,
+               'model_2':model_2,
+               'epoch':epoch,
+               'batch_idx':batch_idx,
+               'optimizer_1':optimizer_1,
+               'optimizer_2':optimizer_2}, filepath)
+def load_ckpoints(weights_path, istrain:bool):
+    ckpoints = torch.load(weights_path)
+    
+    if istrain:
+        return ckpoints['model_2'], ckpoints['epoch'], ckpoints['batch_idx'], ckpoints['optimizer_1'], ckpoints['optimizer_2']
+    else:
+        return ckpoints['model_1']

@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from models.backbones import ResNet38
+from models.backbones import ResNet38, ResNet38Light, VGG16
     
 class DBConv(nn.Sequential):
     '''
@@ -9,10 +9,10 @@ class DBConv(nn.Sequential):
     '''
     def __init__(self, in_channels, out_channels):
         conv_layers = [
-            nn.Conv2d(in_channels, out_channels, 3, bias=False),
+            nn.Conv2d(in_channels, out_channels, 3, padding=1, bias=False),
             nn.BatchNorm2d(out_channels),
             nn.ReLU(),
-            nn.Conv2d(out_channels, out_channels, 3, bias=False),
+            nn.Conv2d(out_channels, out_channels, 3, padding=1, bias=False),
             nn.BatchNorm2d(out_channels),
             nn.ReLU()
         ]
@@ -30,7 +30,7 @@ class UNetDecoder(nn.Module):
         self.conv4 = DBConv(c2+c3//2, c2//2)
         self.conv5 = DBConv(c1+c2//2, c2//2)
         
-        self.classifier = nn.Conv2d(c1//2, num_classes, kernel_size=1, bias=False)
+        self.classifier = nn.Conv2d(c2//2, num_classes, kernel_size=1, bias=False)
         
     def forward(self, x, pass1, pass2, pass3, pass4):
         x = self.conv1(x)
@@ -53,6 +53,14 @@ class UNet(nn.Module):
             self.backbone = ResNet38(in_channels)
             enc_out_channels = [64, 128, 256, 512, 4096]
             self.out_keys = ['conv1', 'conv2', 'conv3', 'conv4', 'conv6']
+        elif backbone == 'resnet38_light':
+            self.backbone = ResNet38Light(in_channels)
+            enc_out_channels = self.backbone.enc_out_channels
+            self.out_keys = ['conv1', 'conv2', 'conv3', 'conv4', 'conv6']
+        elif backbone == 'vgg16':
+            self.backbone = VGG16(in_channels)
+            enc_out_channels = self.backbone.enc_out_channels
+            self.out_keys = ['conv1', 'conv2', 'conv3', 'conv4', 'conv5']
         self.decoder = UNetDecoder(enc_out_channels, num_classes)
     
     def forward(self, x):

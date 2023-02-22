@@ -71,7 +71,8 @@ class ResBlock_bot(nn.Module):
 
         if not self.same_shape:
             self.conv_branch1 = nn.Conv2d(in_channels, out_channels, 1, stride, bias=False)
-
+        else :
+            self.conv_branch1 = nn.Identity()
     def forward(self, x, get_x_bn_relu=False):
 
         branch2 = self.bn_branch2a(x)
@@ -194,3 +195,141 @@ class ResNet38(nn.Module):
                 layer.eval()
                 layer.bias.requires_grad = False
                 layer.weight.requires_grad = False
+                
+
+class ResNet38Light(nn.Module):
+    def __init__(self, in_channels):
+        super(ResNet38Light, self).__init__()
+        first_ch = 32
+        self.conv1a = nn.Conv2d(in_channels, first_ch, 3, padding=1, bias=False)
+
+        self.b2 = ResBlock(first_ch, first_ch*2, first_ch*2, stride=2)
+        self.b2_1 = ResBlock(first_ch*2, first_ch*2, first_ch*2)
+        self.b2_2 = ResBlock(first_ch*2, first_ch*2, first_ch*2)
+
+        self.b3 = ResBlock(first_ch*2, first_ch*4, first_ch*4, stride=2)
+        self.b3_1 = ResBlock(first_ch*4, first_ch*4, first_ch*4)
+        self.b3_2 = ResBlock(first_ch*4, first_ch*4, first_ch*4)
+
+        self.b4 = ResBlock(first_ch*4, first_ch*8, first_ch*8, stride=2)
+        self.b4_1 = ResBlock(first_ch*8, first_ch*8, first_ch*8)
+        self.b4_2 = ResBlock(first_ch*8, first_ch*8, first_ch*8)
+        self.b4_3 = ResBlock(first_ch*8, first_ch*8, first_ch*8)
+        self.b4_4 = ResBlock(first_ch*8, first_ch*8, first_ch*8)
+        self.b4_5 = ResBlock(first_ch*8, first_ch*8, first_ch*8)
+
+        self.b5 = ResBlock(first_ch*8, first_ch*8, first_ch*8, stride=1, first_dilation=1, dilation=2)
+        self.b5_1 = ResBlock(first_ch*8, first_ch*8, first_ch*8, dilation=2)
+        self.b5_2 = ResBlock(first_ch*8, first_ch*8, first_ch*8, dilation=2)
+
+        self.b6 = ResBlock_bot(first_ch*8, first_ch*8, stride=1, dilation=4, dropout=0.3)
+
+        self.b7 = ResBlock_bot(first_ch*8, first_ch*8, dilation=4, dropout=0.5)
+
+        self.bn7 = nn.BatchNorm2d(first_ch*8)
+
+        # self.not_training = [self.conv1a]
+        self.enc_out_channels = [first_ch, first_ch*2, first_ch*4, first_ch*8, first_ch*8]
+        
+        self.not_training = []
+
+    def forward(self, x):
+        return self.forward_as_dict(x)['conv6']
+
+    def forward_as_dict(self, x):
+
+        x = self.conv1a(x)
+        conv1 = x
+        x = self.b2(x) # down
+        x = self.b2_1(x)
+        x = self.b2_2(x)
+        conv2 = x
+        
+        x = self.b3(x) # down
+        x = self.b3_1(x)
+        x = self.b3_2(x)
+        conv3 = x
+        
+        x = self.b4(x) # down
+        x = self.b4_1(x)
+        x = self.b4_2(x)
+        x = self.b4_3(x)
+        x = self.b4_4(x)
+        x = self.b4_5(x)
+
+        x, conv4 = self.b5(x, get_x_bn_relu=True)
+        x = self.b5_1(x)
+        x = self.b5_2(x)
+
+        x, conv5 = self.b6(x, get_x_bn_relu=True)
+
+        x = self.b7(x)
+        conv6 = F.relu(self.bn7(x))
+
+        return dict({'conv1':conv1, 'conv2':conv2, 'conv3':conv3, 'conv4': conv4, 'conv5': conv5, 'conv6': conv6})
+
+
+## VGG16
+class VGG16(nn.Module):
+    def __init__(self, in_channels):
+        super(VGG16, self).__init__()
+        # input image size (N, 3, 224, 224)
+        # after maxpooling layer, h and w are devided by 2 : 224->112->56->28->14->7
+        self.in_channels = in_channels
+        # there are out_channels and M(maxpool) in self.vgg_cfg 
+        self.vgg_cfg = [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 'M', 512, 512, 512, 'M', 512, 512, 512, 'M']
+        first_ch = 64
+        self.conv1 = nn.Sequential(nn.Conv2d(in_channels, first_ch, kernel_size=3, padding=1), 
+                              nn.Conv2d(first_ch, first_ch, kernel_size=3, padding=1))
+        self.conv2 = nn.Sequential(nn.Conv2d(first_ch, first_ch*2, kernel_size=3, padding=1), 
+                              nn.Conv2d(first_ch*2, first_ch*2, kernel_size=3, padding=1))
+        self.conv3 = nn.Sequential(nn.Conv2d(first_ch*2, first_ch*4, kernel_size=3, padding=1), 
+                              nn.Conv2d(first_ch*4, first_ch*4, kernel_size=3, padding=1),
+                              nn.Conv2d(first_ch*4, first_ch*4, kernel_size=3, padding=1))
+        self.conv4 = nn.Sequential(nn.Conv2d(first_ch*4, first_ch*8, kernel_size=3, padding=1), 
+                              nn.Conv2d(first_ch*8, first_ch*8, kernel_size=3, padding=1),
+                              nn.Conv2d(first_ch*8, first_ch*8, kernel_size=3, padding=1))
+        self.conv5 = nn.Sequential(nn.Conv2d(first_ch*8, first_ch*8, kernel_size=3, padding=1), 
+                              nn.Conv2d(first_ch*8, first_ch*8, kernel_size=3, padding=1),
+                              nn.Conv2d(first_ch*8, first_ch*8, kernel_size=3, padding=1))
+        self.maxpool = nn.MaxPool2d(kernel_size=2, stride=2)
+        
+        self.enc_out_channels = [first_ch, first_ch*2, first_ch*4, first_ch*8, first_ch*8]
+        
+    def forward(self, x):
+        output = self.conv1(x)
+        output = self.maxpool(output)
+        output = self.conv2(output)
+        output = self.maxpool(output)
+        output = self.conv3(output)
+        output = self.maxpool(output)
+        output = self.conv4(output)
+        output = self.maxpool(output)
+        output = self.conv5(output)
+        output = self.maxpool(output)
+
+        return output
+    
+    def forward_as_dict(self, x):
+        out_dict = dict()
+        output = self.conv1(x)
+        output = self.maxpool(output)
+        out_dict['conv1'] = output
+        
+        output = self.conv2(output)
+        output = self.maxpool(output)
+        out_dict['conv2'] = output
+        
+        output = self.conv3(output)
+        output = self.maxpool(output)
+        out_dict['conv3'] = output
+        
+        output = self.conv4(output)
+        output = self.maxpool(output)
+        out_dict['conv4'] = output
+        
+        output = self.conv5(output)
+        output = self.maxpool(output)
+        out_dict['conv5'] = output
+        
+        return out_dict

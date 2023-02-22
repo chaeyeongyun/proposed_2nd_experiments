@@ -86,7 +86,15 @@ def train(cfg):
             ul_input = ul_input.to(device)
             pred_ul_1 = model_1(ul_input)
             pred_ul_2 = model_2(ul_input)
-            
+            ## supervised loss
+            sup_loss_1 = criterion(pred_sup_1, l_target)
+            sup_loss_2 = criterion(pred_sup_2, l_target)
+            sup_loss = sup_loss_1 + sup_loss_2
+            sup_loss.backward()
+            optimizer_1.step()
+            optimizer_2.step()
+            optimizer_1.zero_grad()
+            optimizer_2.zero_grad()
             ## cps loss ##
             pred_1 = torch.cat([pred_sup_1, pred_ul_1], dim=0)
             pred_2 = torch.cat([pred_sup_2, pred_ul_2], dim=0)
@@ -95,10 +103,11 @@ def train(cfg):
             pseudo_2 = torch.argmax(pred_2, dim=1).long()
             ## cps loss
             cps_loss = criterion(pred_1, pseudo_2) + criterion(pred_2, pseudo_1)
-            ## supervised loss
-            sup_loss_1 = criterion(pred_sup_1, l_target)
-            sup_loss_2 = criterion(pred_sup_2, l_target)
-            sup_loss = sup_loss_1 + sup_loss_2
+            cps_loss.backward()
+            optimizer_1.step()
+            optimizer_2.step()
+            optimizer_1.zero_grad()
+            optimizer_2.zero_grad()
             
             ## learning rate update
             current_idx = epoch * len(unsup_loader) + batch_idx
@@ -106,12 +115,6 @@ def train(cfg):
             # update the learning rate
             optimizer_1.param_groups[0]['lr'] = learning_rate
             optimizer_2.param_groups[0]['lr'] = learning_rate
-            
-            loss = sup_loss + cps_loss_weight*cps_loss
-            loss.backward()
-            optimizer_1.step()
-            optimizer_2.step()
-            
             
             step_miou, iou_list = measurement.miou(measurement._make_confusion_matrix(pred_sup_1.detach().cpu().numpy(), l_target.detach().cpu().numpy()))
             sum_miou += step_miou

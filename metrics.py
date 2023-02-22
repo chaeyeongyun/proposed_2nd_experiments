@@ -56,7 +56,7 @@ class Measurement:
         sum_row = np.sum(conf_mat, -1) # (N, 3)
         for i in range(self.num_classes):
             batch_mean_iou = np.mean(conf_mat[:, i, i] / (sum_col[:, i]+sum_row[:, i]-conf_mat[:, i, i]+1e-8))
-            iou_list += [batch_mean_iou]
+            iou_list.append(batch_mean_iou)
         iou_ndarray = np.array(iou_list)
         miou = np.mean(iou_ndarray)
         return miou, iou_list

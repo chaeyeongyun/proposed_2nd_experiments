@@ -11,7 +11,7 @@ def make_loss(loss_name:str, num_classes):
                  'dice_loss':DiceLoss,
                  'focal_loss':FocalLoss}
     if loss_name == 'cross_entropy':
-        return loss_name[loss_name]()
+        return loss_dict[loss_name]()
     else:
         return loss_dict[loss_name](num_classes=num_classes)
     

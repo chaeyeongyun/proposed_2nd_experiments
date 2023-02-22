@@ -8,7 +8,6 @@ from torch.utils.data import Dataset
 import torchvision.transforms.functional as TF
 import torch.nn.functional as F
 
-from utils.processing import img_to_label
 
 class BaseDataset(Dataset):
     def __init__(self, data_dir, split, resize=None):
@@ -17,6 +16,8 @@ class BaseDataset(Dataset):
             self.resize = (resize, resize)
         elif type(resize) in [tuple, list]:
             self.resize = resize
+        elif resize==None:
+            self.resize = None
         else:
             raise ValueError(f"It's invalid type of resize {type(resize)}")
         
@@ -35,16 +36,19 @@ class BaseDataset(Dataset):
     
     def __getitem__(self, index):
         filename = self.filenames[index]
-        img = TF.to_tensor(Image.open(os.path.join(self.img_dir, filename)))
+        img = Image.open(os.path.join(self.img_dir, filename)).convert('RGB')
+        # img = TF.to_tensor(Image.open(os.path.join(self.img_dir, filename)).convert('RGB'))
         if self.target_dir != None:
-            target = TF.to_tensor(Image.open(os.path.join(self.target_dir, filename)))
+            target = Image.open(os.path.join(self.target_dir, filename)).convert('L')
         else:
-            target = None    
+            target = None
         
         if self.resize != None:
-            img = F.interpolate(img, self.resize, mode='bilinear')
-            target = F.interpolate(target, self.resize, mode='nearest') if target != None else None
+            img = img.resize(self.resize, resample=Image.Resampling.BILINEAR)
+            target = target.resize(self.resize, resample=Image.Resampling.NEAREST) if target != None else None
         
+        img = TF.to_tensor(img)
+        target = torch.from_numpy(np.array(target)) if target != None else None
         return {'filename':filename, 'img':img, 'target':target}
         
 class SemiSupDataset(Dataset):
