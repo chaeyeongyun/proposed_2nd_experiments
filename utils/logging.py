@@ -1,11 +1,13 @@
 import torch 
 import wandb
 from typing import List
+import os
 
 #TODO: 개선/ 추가
 class Logger():
     def __init__(self, cfg):
         wandb.init(project=cfg.project_name,
+                   name=cfg.project_name+str(len(os.listdir(cfg.train.save_dir)))
                 #    notes="baseline",
                 #    tags = ["csp+unet+cutmix"]
                 )
