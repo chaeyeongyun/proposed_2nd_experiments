@@ -4,8 +4,8 @@ def img_to_label(target_img:torch.Tensor, pixel_to_label_dict:dict):
     pixels = list(pixel_to_label_dict.keys())
     output = target_img
     for pixel in pixels:
-        output = torch.where(target_img==int(pixel), pixel_to_label_dict[pixel], target_img)
-    return output
+        output = torch.where(output==int(pixel), pixel_to_label_dict[pixel], output)
+    return output.long()
 
 def label_to_onehot(target:torch.Tensor, num_classes:int):
     """onehot encoding for 1 channel labelmap

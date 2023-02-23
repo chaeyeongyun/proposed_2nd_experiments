@@ -26,7 +26,7 @@ class BaseDataset(Dataset):
             self.filenames = os.listdir(os.path.join(data_dir, 'target'))
             self.target_dir = os.path.join(data_dir, 'target')
         elif split == 'unlabelled':
-            self.filenames = set(os.listdir(os.path.join(data_dir, 'input'))) - set(os.listdir(os.path.join(data_dir, 'target')))
+            self.filenames = list(set(os.listdir(os.path.join(data_dir, 'input'))) - set(os.listdir(os.path.join(data_dir, 'target'))))
             self.target_dir = None
         else:
             raise ValueError(f"split has to be labelled or unlabelled")
@@ -49,6 +49,8 @@ class BaseDataset(Dataset):
         
         img = TF.to_tensor(img)
         target = torch.from_numpy(np.array(target)) if target != None else None
+        if target == None:
+            return {'filename':filename, 'img':img}
         return {'filename':filename, 'img':img, 'target':target}
         
 class SemiSupDataset(Dataset):

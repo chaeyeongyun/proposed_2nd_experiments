@@ -313,23 +313,23 @@ class VGG16(nn.Module):
     def forward_as_dict(self, x):
         out_dict = dict()
         output = self.conv1(x)
-        output = self.maxpool(output)
         out_dict['conv1'] = output
+        output = self.maxpool(output)
         
         output = self.conv2(output)
-        output = self.maxpool(output)
         out_dict['conv2'] = output
+        output = self.maxpool(output)
         
         output = self.conv3(output)
-        output = self.maxpool(output)
         out_dict['conv3'] = output
+        output = self.maxpool(output)
         
         output = self.conv4(output)
-        output = self.maxpool(output)
         out_dict['conv4'] = output
+        output = self.maxpool(output)
         
         output = self.conv5(output)
-        output = self.maxpool(output)
         out_dict['conv5'] = output
+        
         
         return out_dict

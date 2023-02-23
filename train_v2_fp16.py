@@ -24,6 +24,7 @@ from metrics import Measurement
 
 # 일단 no cutmix version
 def train(cfg):
+    half = cfg.train.half
     logger = Logger(cfg) if cfg.wandb_logging else None
     num_classes = cfg.num_classes
     batch_size = cfg.train.batch_size
@@ -57,23 +58,22 @@ def train(cfg):
     sup_loader = DataLoader(sup_dataset, batch_size=batch_size, shuffle=True)
     unsup_loader = DataLoader(unsup_dataset, batch_size=batch_size, shuffle=True)
     
-    
     lr_scheduler = WarmUpPolyLR(cfg.train.learning_rate, lr_power=cfg.train.lr_scheduler.lr_power, 
                                 total_iters=len(unsup_loader)*num_epochs,
                                 warmup_steps=len(unsup_loader)*cfg.train.lr_scheduler.warmup_epoch)
     optimizer_1 = torch.optim.Adam(model_1.parameters(), lr=cfg.train.learning_rate, betas=(0.9, 0.999))
     optimizer_2 = torch.optim.Adam(model_2.parameters(), lr=cfg.train.learning_rate, betas=(0.9, 0.999))
     
-    cps_loss_weight = cfg.train.cps_loss_weight
+    # progress bar
     
+    
+    scaler = torch.cuda.amp.GradScaler(enabled=half)
     for epoch in range(num_epochs):
         trainloader = iter(zip(cycle(sup_loader), unsup_loader))
         crop_iou, weed_iou, back_iou = 0, 0, 0
         sum_cps_loss, sum_sup_loss_1, sum_sup_loss_2 = 0, 0, 0
-        sum_loss = 0
         sum_miou = 0
         ep_start = time.time()
-        # progress bar
         pbar =  tqdm(range(len(unsup_loader)))
         for batch_idx in pbar:
             sup_dict, unsup_dict = next(trainloader)
@@ -85,25 +85,42 @@ def train(cfg):
             optimizer_2.zero_grad()
             l_input = l_input.to(device)
             l_target = l_target.to(device)
-            pred_sup_1 = model_1(l_input)
-            pred_sup_2 = model_2(l_input)
+            with torch.cuda.amp.autocast(enabled=half):
+                pred_sup_1 = model_1(l_input)
+                pred_sup_2 = model_2(l_input)
             ## predict in unsupervised manner ##
-            ul_input = ul_input.to(device)
-            pred_ul_1 = model_1(ul_input)
-            pred_ul_2 = model_2(ul_input)
             
+            with torch.cuda.amp.autocast(enabled=half):
+                ## supervised loss
+                sup_loss_1 = criterion(pred_sup_1, l_target)
+                sup_loss_2 = criterion(pred_sup_2, l_target)
+                sup_loss = sup_loss_1 + sup_loss_2
+            scaler.scale(sup_loss).backward()
+            scaler.step(optimizer_1)
+            scaler.step(optimizer_2)
+            scaler.update()
+
+            optimizer_1.zero_grad()
+            optimizer_2.zero_grad()
+            
+            ul_input = ul_input.to(device)
+            with torch.cuda.amp.autocast(enabled=half):
+                pred_ul_1 = model_1(ul_input)
+                pred_ul_2 = model_2(ul_input)
+                
             ## cps loss ##
-            pred_1 = torch.cat([pred_sup_1, pred_ul_1], dim=0)
-            pred_2 = torch.cat([pred_sup_2, pred_ul_2], dim=0)
             # pseudo label
-            pseudo_1 = torch.argmax(pred_1, dim=1).long()
-            pseudo_2 = torch.argmax(pred_2, dim=1).long()
-            ## cps loss
-            cps_loss = criterion(pred_1, pseudo_2) + criterion(pred_2, pseudo_1)
-            ## supervised loss
-            sup_loss_1 = criterion(pred_sup_1, l_target)
-            sup_loss_2 = criterion(pred_sup_2, l_target)
-            sup_loss = sup_loss_1 + sup_loss_2
+            pseudo_1 = torch.argmax(pred_ul_1, dim=1).long()
+            pseudo_2 = torch.argmax(pred_ul_2, dim=1).long()
+            with torch.cuda.amp.autocast(enabled=half):
+                ## cps loss
+                cps_loss = criterion(pred_ul_1, pseudo_2) + criterion(pred_ul_2, pseudo_1)
+            
+            scaler.scale(cps_loss).backward()
+            scaler.step(optimizer_1)
+            scaler.step(optimizer_2)
+            scaler.update()
+            
             
             ## learning rate update
             current_idx = epoch * len(unsup_loader) + batch_idx
@@ -112,15 +129,8 @@ def train(cfg):
             optimizer_1.param_groups[0]['lr'] = learning_rate
             optimizer_2.param_groups[0]['lr'] = learning_rate
             
-            loss = sup_loss + cps_loss_weight*cps_loss
-            loss.backward()
-            optimizer_1.step()
-            optimizer_2.step()
-            
-            
             step_miou, iou_list = measurement.miou(measurement._make_confusion_matrix(pred_sup_1.detach().cpu().numpy(), l_target.detach().cpu().numpy()))
             sum_miou += step_miou
-            sum_loss = loss.item()
             sum_cps_loss += cps_loss.item()
             sum_sup_loss_1 += sup_loss_1.item()
             sum_sup_loss_2 += sup_loss_2.item()
@@ -134,22 +144,23 @@ def train(cfg):
         
         ## end epoch ## 
         back_iou, weed_iou, crop_iou = back_iou / len(unsup_loader), weed_iou / len(unsup_loader), crop_iou / len(unsup_loader)
-        cps_loss = sum_cps_loss / len(unsup_loader)
-        sup_loss_1 = sum_sup_loss_1 / len(unsup_loader)
-        sup_loss_2 = sum_sup_loss_2 / len(unsup_loader)
-        loss = sum_loss / len(unsup_loader)
+        
+        loss = cps_loss + sup_loss_1 + sup_loss_2
         miou = sum_miou / len(unsup_loader)
+        back_iou += iou_list[0]
+        weed_iou += iou_list[1]
+        crop_iou += iou_list[2]
         print_txt = f"[Epoch{epoch}]" \
                             + f"miou=miou, sup_loss_1={sup_loss_1:.4f}, sup_loss_2={sup_loss_2:.4f}, cps_loss={cps_loss:.4f}"
         log_txt.write(print_txt)
         if epoch % 10 == 0:
             save_ckpoints(model_1.state_dict(),
-                        model_2.state_dict(),
-                        epoch,
-                        batch_idx,
-                        optimizer_1.state_dict(),
-                        optimizer_2.state_dict(),
-                        os.path.join(ckpoints_dir, f"{epoch}ep.pth"))
+                          model_2.state_dict(),
+                          epoch,
+                          batch_idx,
+                          optimizer_1.state_dict(),
+                          optimizer_2.state_dict(),
+                          os.path.join(ckpoints_dir, f"{epoch}ep.pth"))
         # wandb logging
         if logger is not None:
             for key in logger.config_dict.keys():
@@ -164,7 +175,7 @@ def train(cfg):
     
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--config_path', default='./config/resnet38_unet_csp.json')
+    parser.add_argument('--config_path', default='./config/resnet38_unet_csp_trainver2.json')
     opt = parser.parse_args()
     cfg = get_config_from_json(opt.config_path)
     

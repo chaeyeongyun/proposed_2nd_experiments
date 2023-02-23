@@ -22,14 +22,14 @@ class Logger():
         
         # initialize log dict
         self.log_dict = dict()
-        for key in cfg.wandb_logging:
+        for key in cfg.train.wandb_log:
             self.log_dict[key] = None
             
     def logging(self, epoch):
         wandb.log(self.log_dict, step=epoch)
     
     def config_update(self):
-        wandb.config.update(self.config_dict)
+        wandb.config.update(self.config_dict, allow_val_change=True)
     
     # def end(self, summary_dict):
     #     for key, value in summary_dict.items():

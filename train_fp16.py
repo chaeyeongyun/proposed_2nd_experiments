@@ -33,6 +33,8 @@ def train(cfg):
     measurement = Measurement(num_classes)
     save_dir = os.path.join(cfg.train.save_dir, cfg.project_name+str(len(os.listdir(cfg.train.save_dir))))
     os.makedirs(save_dir)
+    ckpoints_dir = os.path.join(save_dir, 'ckpoints')
+    os.mkdir(ckpoints_dir)
     log_txt = open(os.path.join(save_dir, 'log_txt'), 'w')
     
     model_1 = models.make_model(cfg.backbone.name, cfg.seg_head.name, cfg.seg_head.in_channels, num_classes).to(device)
@@ -51,12 +53,12 @@ def train(cfg):
     criterion = make_loss(cfg.train.criterion, num_classes)
     
     sup_dataset = BaseDataset(os.path.join(cfg.train.data_dir, 'train'), split='labelled', resize=cfg.resize)
-    unsup_dataset = BaseDataset(os.path.join(cfg.train.data_dir, 'train'), split='labelled')
+    unsup_dataset = BaseDataset(os.path.join(cfg.train.data_dir, 'train'), split='unlabelled', resize=cfg.resize)
     
     sup_loader = DataLoader(sup_dataset, batch_size=batch_size, shuffle=True)
     unsup_loader = DataLoader(unsup_dataset, batch_size=batch_size, shuffle=True)
     
-    trainloader = iter(zip(cycle(sup_loader), unsup_loader))
+    
     lr_scheduler = WarmUpPolyLR(cfg.train.learning_rate, lr_power=cfg.train.lr_scheduler.lr_power, 
                                 total_iters=len(unsup_loader)*num_epochs,
                                 warmup_steps=len(unsup_loader)*cfg.train.lr_scheduler.warmup_epoch)
@@ -64,13 +66,16 @@ def train(cfg):
     optimizer_2 = torch.optim.Adam(model_2.parameters(), lr=cfg.train.learning_rate, betas=(0.9, 0.999))
     
     # progress bar
-    pbar =  tqdm(range(len(unsup_loader)))
     cps_loss_weight = cfg.train.cps_loss_weight
     scaler = torch.cuda.amp.GradScaler(enabled=half)
     for epoch in range(num_epochs):
+        trainloader = iter(zip(cycle(sup_loader), unsup_loader))
+        crop_iou, weed_iou, back_iou = 0, 0, 0
         sum_cps_loss, sum_sup_loss_1, sum_sup_loss_2 = 0, 0, 0
+        sum_loss = 0
         sum_miou = 0
         ep_start = time.time()
+        pbar =  tqdm(range(len(unsup_loader)))
         for batch_idx in pbar:
             sup_dict, unsup_dict = next(trainloader)
             l_input, l_target = sup_dict['img'], sup_dict['target']
@@ -121,25 +126,37 @@ def train(cfg):
             
             step_miou, iou_list = measurement.miou(measurement._make_confusion_matrix(pred_sup_1.detach().cpu().numpy(), l_target.detach().cpu().numpy()))
             sum_miou += step_miou
-            loss = loss.item()
+            sum_loss = loss.item()
             sum_cps_loss += cps_loss.item()
             sum_sup_loss_1 += sup_loss_1.item()
             sum_sup_loss_2 += sup_loss_2.item()
-            
+            back_iou += iou_list[0]
+            weed_iou += iou_list[1]
+            crop_iou += iou_list[2]
             print_txt = f"[Epoch{epoch}/{cfg.train.num_epochs}][Iter{batch_idx+1}/{len(unsup_loader)}] lr={learning_rate:.2f}" \
                             + f"miou={step_miou}, sup_loss_1={sup_loss_1:.4f}, sup_loss_2={sup_loss_2:.4f}, cps_loss={cps_loss:.4f}"
             pbar.set_description(print_txt, refresh=False)
             log_txt.write(print_txt)
         
         ## end epoch ## 
+        back_iou, weed_iou, crop_iou = back_iou / len(unsup_loader), weed_iou / len(unsup_loader), crop_iou / len(unsup_loader)
         cps_loss = sum_cps_loss / len(unsup_loader)
         sup_loss_1 = sum_sup_loss_1 / len(unsup_loader)
         sup_loss_2 = sum_sup_loss_2 / len(unsup_loader)
+        loss = loss / len(unsup_loader)
         miou = sum_miou / len(unsup_loader)
+        
         print_txt = f"[Epoch{epoch}]" \
                             + f"miou=miou, sup_loss_1={sup_loss_1:.4f}, sup_loss_2={sup_loss_2:.4f}, cps_loss={cps_loss:.4f}"
         log_txt.write(print_txt)
-        #TODO: logger ckpoint 저장 부분 추가
+        if epoch % 10 == 0:
+            save_ckpoints(model_1.state_dict(),
+                        model_2.state_dict(),
+                        epoch,
+                        batch_idx,
+                        optimizer_1.state_dict(),
+                        optimizer_2.state_dict(),
+                        os.path.join(ckpoints_dir, f"{epoch}ep.pth"))
         # wandb logging
         if logger is not None:
             for key in logger.config_dict.keys():
