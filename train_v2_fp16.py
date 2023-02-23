@@ -24,6 +24,12 @@ from metrics import Measurement
 
 # 일단 no cutmix version
 def train(cfg):
+    save_dir = os.path.join(cfg.train.save_dir, cfg.project_name+str(len(os.listdir(cfg.train.save_dir))))
+    os.makedirs(save_dir)
+    ckpoints_dir = os.path.join(save_dir, 'ckpoints')
+    os.mkdir(ckpoints_dir)
+    log_txt = open(os.path.join(save_dir, 'log_txt'), 'w')
+    
     half = cfg.train.half
     logger = Logger(cfg) if cfg.wandb_logging else None
     num_classes = cfg.num_classes
@@ -31,11 +37,6 @@ def train(cfg):
     num_epochs = cfg.train.num_epochs
     device = device_setting(cfg.train.device)
     measurement = Measurement(num_classes)
-    save_dir = os.path.join(cfg.train.save_dir, cfg.project_name+str(len(os.listdir(cfg.train.save_dir))))
-    os.makedirs(save_dir)
-    ckpoints_dir = os.path.join(save_dir, 'ckpoints')
-    os.mkdir(ckpoints_dir)
-    log_txt = open(os.path.join(save_dir, 'log_txt'), 'w')
     
     model_1 = models.make_model(cfg.backbone.name, cfg.seg_head.name, cfg.seg_head.in_channels, num_classes).to(device)
     model_2 = models.make_model(cfg.backbone.name, cfg.seg_head.name, cfg.seg_head.in_channels, num_classes).to(device)
