@@ -172,7 +172,7 @@ def train(cfg):
     
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--config_path', default='./config/resnet38_unet_csp.json')
+    parser.add_argument('--config_path', default='./config/train/vgg16_unet_csp.json')
     opt = parser.parse_args()
     cfg = get_config_from_json(opt.config_path)
     

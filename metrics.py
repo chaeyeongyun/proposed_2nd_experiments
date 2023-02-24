@@ -63,8 +63,8 @@ class Measurement:
     
     def precision(self, conf_mat:np.ndarray):
         # confmat shape (N, self.num_classes, self.num_classes)
-        sum_col = np.sum(conf_mat, -2)# (N, 3) -> 0으로 예측, 1로 예측 2로 예측 각각 sum
-        precision_per_class = np.mean(np.array([conf_mat[:, i, i]/ sum_col[:, i] for i in range(self.num_classes)]), axis=-1) # list안에 (N, )가 클래스개수만큼.-> (3, N) -> 평균->(3,)
+        sum_col = np.sum(conf_mat, -2)# (N, num_classes) -> 0으로 예측, 1로 예측 2로 예측 각각 sum
+        precision_per_class = np.mean(np.array([conf_mat[:, i, i]/ (sum_col[:, i]+1e-7) for i in range(self.num_classes)]), axis=-1) # list안에 (N, )가 클래스개수만큼.-> (3, N) -> 평균->(3,)
         # multi class에 대해 recall / precision을 구할 때에는 클래스 모두 합쳐 평균을 낸다.
         mprecision = np.mean(precision_per_class)
         return mprecision, precision_per_class

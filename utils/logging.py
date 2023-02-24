@@ -43,6 +43,7 @@ def save_ckpoints(model_1, model_2, epoch, batch_idx, optimizer_1, optimizer_2, 
                'batch_idx':batch_idx,
                'optimizer_1':optimizer_1,
                'optimizer_2':optimizer_2}, filepath)
+    
 def load_ckpoints(weights_path, istrain:bool):
     ckpoints = torch.load(weights_path)
     

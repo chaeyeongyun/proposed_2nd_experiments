@@ -1,7 +1,7 @@
 import torchvision
 import torch.nn as nn
 from .unet import UNet
-from .backbones import ResNet38, VGG16, ResNet50, ResNet101
+from .backbones import ResNet38, VGG16#, ResNet50, ResNet101
 
 model_dict = {
     'unet':UNet,
