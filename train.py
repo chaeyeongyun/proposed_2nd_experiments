@@ -120,7 +120,7 @@ def train(cfg):
             
             step_miou, iou_list = measurement.miou(measurement._make_confusion_matrix(pred_sup_1.detach().cpu().numpy(), l_target.detach().cpu().numpy()))
             sum_miou += step_miou
-            sum_loss = loss.item()
+            sum_loss += loss.item()
             sum_cps_loss += cps_loss.item()
             sum_sup_loss_1 += sup_loss_1.item()
             sum_sup_loss_2 += sup_loss_2.item()
