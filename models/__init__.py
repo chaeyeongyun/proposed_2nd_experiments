@@ -1,9 +1,15 @@
+import torchvision
 import torch.nn as nn
 from .unet import UNet
-from .backbones import ResNet38
+from .backbones import ResNet38, VGG16, ResNet50, ResNet101
 
 model_dict = {
-    'unet':UNet
+    'unet':UNet,
+}
+backbone_dict = {
+    'vgg16':VGG16,
+    # 'resnet50':ResNet50,
+    # 'resnet101':ResNet101
 }
 def make_model(backbone:str, seg_head:str, in_channels:int, num_classes:int):
     model = model_dict[seg_head](backbone=backbone, in_channels=in_channels, num_classes=num_classes)

@@ -37,8 +37,8 @@ def train(cfg):
     measurement = Measurement(num_classes)
     log_txt = open(os.path.join(save_dir, 'log_txt'), 'w')
     
-    model_1 = models.make_model(cfg.backbone.name, cfg.seg_head.name, cfg.seg_head.in_channels, num_classes).to(device)
-    model_2 = models.make_model(cfg.backbone.name, cfg.seg_head.name, cfg.seg_head.in_channels, num_classes).to(device)
+    model_1 = models.make_model(cfg.model.backbone.name, cfg.model.seg_head.name, cfg.model.in_channels, num_classes).to(device)
+    model_2 = models.make_model(cfg.model.backbone.name, cfg.model.seg_head.name, cfg.model.in_channels, num_classes).to(device)
     # TODO: load pretrained weights (only backbone)
     
     # initialize differently (segmentation head)

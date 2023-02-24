@@ -3,6 +3,7 @@ from torch import nn
 import numpy as np
 
 import torch.nn.functional as F
+import torchvision
 
 # ResNet 38 https://github.com/peihan-miao/ResNet38-Semantic-Segmentation/blob/master/network/resnet38d.py
 class ResBlock(nn.Module):
@@ -333,3 +334,5 @@ class VGG16(nn.Module):
         
         
         return out_dict
+
+# ResNet 50

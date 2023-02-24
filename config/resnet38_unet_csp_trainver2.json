@@ -8,13 +8,15 @@
         "255":2
     },
     "resize":512,
-    "backbone":{
-        "name":"vgg16"
-    
-    },
-    "seg_head":{
-        "name":"unet",
-        "in_channels":3
+    "model":{
+        "in_channels":3,
+        "backbone":{
+            "name":"vgg16"
+        
+        },
+        "seg_head":{
+            "name":"unet"
+        }
     },
     "train":{
         "data_dir":"/content/data/semi_sup_data/CWFID/num30",
