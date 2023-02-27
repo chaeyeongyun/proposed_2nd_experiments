@@ -1,13 +1,13 @@
 {   
     "project_name":"Unet+CSP_num30",
-    "wandb_logging":false,
+    "wandb_logging":true,
     "num_classes":3,
     "pixel_to_label":{
         "0":0,
         "128":1,
         "255":2
     },
-    "resize":32,
+    "resize":512,
     "model":{
         "in_channels":3,
         "backbone":{
