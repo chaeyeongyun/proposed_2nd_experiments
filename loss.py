@@ -3,6 +3,7 @@ import torch.nn.functional as F
 import torch.nn as nn
 
 from typing import List
+import numpy as np
 
 from utils.processing import label_to_onehot
 
@@ -118,3 +119,20 @@ class FocalLoss(nn.Module):
             pred = F.softmax(pred, dim=1).float()
         
         return focal_loss(pred, target, self.alpha, self.gamma, self.num_classes, self.ignore_idx, self.reduction)
+
+def make_unreliable_mask(pred_1, target, pred_2, percent):
+    # student 예측, teacher label, drop percent, teacher pred
+    # 이거를 해당 모델 예측, 다른 모델로 만든 pseudo label, 다른 모델의 예측으로 바꾸면 될 듯
+    batch_size, num_classes, h, w = pred_1.shape
+    with torch.no_grad():
+        prob = torch.softmax(pred_2, dim=1)
+        entropy = -torch.sum(prob * torch.log(prob + 1e-10), dim=1)
+
+        thresh = np.percentile(
+            entropy[target != 255].detach().cpu().numpy().flatten(), percent
+        )
+        thresh_mask = entropy.ge(thresh).bool() * (target != 255).bool()
+
+        target[thresh_mask] = 255
+        weight = batch_size * h * w / torch.sum(target != 255)
+        return weight
