@@ -1,5 +1,5 @@
 {   
-    "project_name":"Unet+CSP_num30_trainver2",
+    "project_name":"Unet+CSP_num30_barlow",
     "wandb_logging":true,
     "num_classes":3,
     "pixel_to_label":{
@@ -12,7 +12,7 @@
         "in_channels":3,
         "backbone":{
             "name":"vgg16",
-            "pretrain_weights":null
+            "pretrain_weights":"/content/drive/MyDrive/self_supervised/CWFID/vgg16_0/ckpoints/model_last.pth"  
         },
         "seg_head":{
             "name":"unet"
