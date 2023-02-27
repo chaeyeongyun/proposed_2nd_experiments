@@ -1,6 +1,10 @@
 import torch
 import numpy as np
 import random
+#TODO: 
+def augmentation(input, label, logits, mode_list):
+    
+    return input_aug, logits_aug, label_aug
 
 class CutMix():
     def __init__(self, bbox_size:tuple):
