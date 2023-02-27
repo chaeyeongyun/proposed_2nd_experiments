@@ -50,6 +50,9 @@ def train(cfg):
         models.init_weight([model_2.decoder], nn.init.kaiming_normal_,
                         nn.BatchNorm2d, cfg.train.bn_eps, cfg.train.bn_momentum, 
                         mode='fan_in', nonlinearity='relu')
+    if cfg.model.backbone.pretrain_weights != None: # if you don't want to use pretrain weights, set cfg.model.backbone.pretrain_weights to null
+        model_1.backbone.load_state_dict(torch.load(cfg.model.backbone.pretrain_weights))
+        model_2.backbone.load_state_dict(torch.load(cfg.model.backbone.pretrain_weights))
     
     criterion = make_loss(cfg.train.criterion, num_classes)
     

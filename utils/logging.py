@@ -7,7 +7,7 @@ import os
 class Logger():
     def __init__(self, cfg):
         wandb.init(project=cfg.project_name,
-                   name=cfg.project_name+str(len(os.listdir(cfg.train.save_dir)-1))
+                   name=cfg.project_name+str(len(os.listdir(cfg.train.save_dir))-1)
                 #    notes="baseline",
                 #    tags = ["csp+unet+cutmix"]
                 )

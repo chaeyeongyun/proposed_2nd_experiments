@@ -11,8 +11,8 @@
     "model":{
         "in_channels":3,
         "backbone":{
-            "name":"vgg16"
-        
+            "name":"vgg16",
+            "pretrain_weights":"/content/drive/MyDrive/self_supervised/CWFID/vgg16_0/ckpoints/model_last.pth"
         },
         "seg_head":{
             "name":"unet"

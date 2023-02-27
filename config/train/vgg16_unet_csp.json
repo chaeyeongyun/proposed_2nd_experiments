@@ -1,20 +1,22 @@
 {   
     "project_name":"Unet+CSP_num30",
-    "wandb_logging":true,
+    "wandb_logging":false,
     "num_classes":3,
     "pixel_to_label":{
         "0":0,
         "128":1,
         "255":2
     },
-    "resize":512,
-    "backbone":{
-        "name":"vgg16"
-    
-    },
-    "seg_head":{
-        "name":"unet",
-        "in_channels":3
+    "resize":32,
+    "model":{
+        "in_channels":3,
+        "backbone":{
+            "name":"vgg16",
+            "pretrain_weights":"/content/drive/MyDrive/self_supervised/CWFID/vgg16_0/ckpoints/model_last.pth"  
+        },
+        "seg_head":{
+            "name":"unet"
+        }
     },
     "train":{
         "data_dir":"/content/data/semi_sup_data/CWFID/num30",
