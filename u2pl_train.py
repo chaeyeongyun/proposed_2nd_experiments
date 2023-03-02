@@ -10,6 +10,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
+import numpy as np
 
 import models
 from utils.logging import Logger, save_ckpoints, load_ckpoints
@@ -20,8 +21,8 @@ from utils.lr_schedulers import WarmUpPolyLR
 
 from data.dataset import BaseDataset
 from data.augmentations import augmentation
-from loss import make_loss
 from metrics import Measurement
+from loss import make_loss, make_unreliable_weight
 
 # 일단 no cutmix version
 def train(cfg):
@@ -59,7 +60,7 @@ def train(cfg):
         teacher.backbone.load_state_dict(torch.load(cfg.model.backbone.pretrain_weights))
     
     criterion = make_loss(cfg.train.criterion, num_classes)
-    
+    unsup_loss_weight = cfg.train.unsup_loss.weight
     sup_dataset = BaseDataset(os.path.join(cfg.train.data_dir, 'train'), split='labelled', resize=cfg.resize)
     unsup_dataset = BaseDataset(os.path.join(cfg.train.data_dir, 'train'), split='unlabelled', resize=cfg.resize)
     
@@ -79,7 +80,7 @@ def train(cfg):
     queue_ptrlis = []
     queue_size = []
 
-    for i in range(cfg["net"]["num_classes"]):
+    for i in range(num_classes):
         memobank.append([torch.zeros(0, 256)])
         queue_size.append(30000)
         queue_ptrlis.append(torch.zeros(1, dtype=torch.long))
@@ -88,8 +89,8 @@ def train(cfg):
     # build prototype
     prototype = torch.zeros(
         (
-            cfg["net"]["num_classes"],
-            cfg["trainer"]["contrastive"]["num_queries"],
+            num_classes,
+            cfg.train.contrastive_loss.num_queries,
             1,
             256,
         )
@@ -115,6 +116,7 @@ def train(cfg):
                 with torch.cuda.amp.autocast(enabled=half):
                     pred_l = student(l_input)
                     sup_loss = criterion(pred_l, l_target)
+                    unsup_loss, cont_loss = torch.Tensor(0), torch.Tensor(0)
             else:
                 if epoch == cfg.train.sup_only_epoch:
                     # copy student parameters to teacher
@@ -128,18 +130,97 @@ def train(cfg):
                 pred_ul_teacher = teacher(ul_input)
                 pred_ul_teacher = F.softmax(pred_ul_teacher, dim=1)
                 logits_ul_teacher, pseudo_ul = torch.max(pred_ul_teacher, dim=1)
-                # TODO: strong augmentation
-                ul_input_aug, logits_ul_teacher_aug, pseudo_ul_aug = augmentation(
-                    ul_input, pseudo_ul.clone(), logits_ul_teacher.clone(),
-                    cfg.train.strong_aug
-                )
-                ## cps loss ##
-                pred_1 = torch.cat([pred_sup_1, pred_ul_1], dim=0)
-                pred_2 = torch.cat([pred_sup_2, pred_ul_2], dim=0)
-                # pseudo label
-                pseudo_1 = torch.argmax(pred_1, dim=1).long()
-                pseudo_2 = torch.argmax(pred_2, dim=1).long()
-                
+                # strong augmentation
+                if 'strong_aug' in cfg.train:    
+                    ul_input_aug, pseudo_ul_aug, logits_ul_teacher_aug = augmentation(
+                        ul_input, pseudo_ul.clone(), logits_ul_teacher.clone(),
+                        cfg.train.strong_aug
+                    )
+                else:
+                    ul_input_aug, pseudo_ul_aug, logits_ul_teacher_aug = ul_input, pseudo_ul, logits_ul_teacher
+                # supervised loss
+                num_label = len(l_input)
+                all_input = torch.cat((l_input, ul_input_aug), dim=0)
+                with torch.cuda.amp.autocast(enabled=half):
+                    # student inference
+                    pred_student = student(all_input)
+                    l_pred_st, ul_pred_st = pred_student[:num_label], pred_student[num_label:]
+                    sup_loss = criterion(l_pred_st, l_target)
+                # teacher forward
+                teacher.train()
+                with torch.no_grad():
+                    pred_teacher = F.softmax(teacher(all_input))
+                    score_l_tc, score_ul_tc = pred_teacher[:num_label], pred_teacher[num_label:]
+                    
+                # TODO: unsupervised_loss
+                percent_unreliable = cfg.train.unsup_loss.drop_percent * (1-epoch/num_epochs)
+                drop_percent = 100 - percent_unreliable
+                unreliable_weight = make_unreliable_weight(ul_pred_st, pseudo_ul_aug.clone(), score_ul_tc, drop_percent)
+                with torch.cuda.amp.autocast(enabled=half):
+                    unsup_loss = unsup_loss_weight*unreliable_weight* criterion(ul_pred_st, pseudo_ul_aug)
+                # contrastive loss
+                alpha_t = cfg.train.contrastive_loss.low_entropy_threshold * (1-epoch/num_epochs)
+                with torch.no_grad():
+                    prob = torch.softmax(score_ul_tc, dim=1)
+                    entropy = -torch.sum(prob * torch.log(prob + 1e-10), dim=1)
+
+                    low_thresh = np.percentile(
+                        entropy[pseudo_ul_aug != 255].cpu().numpy().flatten(), alpha_t
+                    )
+                    low_entropy_mask = (
+                        entropy.le(low_thresh).float() * (pseudo_ul_aug != 255).bool()
+                    )
+
+                    high_thresh = np.percentile(
+                        entropy[pseudo_ul_aug != 255].cpu().numpy().flatten(),
+                        100 - alpha_t,
+                    )
+                    high_entropy_mask = (
+                        entropy.ge(high_thresh).float() * (pseudo_ul_aug != 255).bool()
+                    )
+
+                    low_mask_all = torch.cat(
+                        (
+                            (l_target.unsqueeze(1) != 255).float(),
+                            low_entropy_mask.unsqueeze(1),
+                        )
+                    )
+                    # low_mask_all = F.interpolate(
+                    #     low_mask_all, size=pred_student.shape[2:], mode="nearest"
+                    # )
+                    if cfg.train.contrastive_loss.get("negative_high_entropy", True):
+                        high_mask_all = torch.cat(
+                            (
+                                (l_target.unsqueeze(1) != 255).float(),
+                                high_entropy_mask.unsqueeze(1),
+                            )
+                        )
+                    else:
+                        high_mask_all = torch.cat(
+                            (
+                                (l_target.unsqueeze(1) != 255).float(),
+                                torch.ones(logits_ul_teacher_aug.shape)
+                                .float()
+                                .unsqueeze(1)
+                                .cuda(),
+                            ),
+                        )
+                    # TODO: onehot바꾸는거 추가하고 contrastive loss / memorybank 부분 만들기 그리고 위에 있는거 도대체 뭔지 코드 분석좀 하기 tlqkf...
+                    # high_mask_all = F.interpolate(
+                    #     high_mask_all, size=pred_student.shape[2:], mode="nearest"
+                    # )  # down sample
+
+                    # # down sample and concat
+                    # label_l_small = F.interpolate(
+                    #     label_onehot(label_l, cfg["net"]["num_classes"]),
+                    #     size=pred_all.shape[2:],
+                    #     mode="nearest",
+                    # )
+                    # label_u_small = F.interpolate(
+                    #     label_onehot(label_u_aug, cfg["net"]["num_classes"]),
+                    #     size=pred_all.shape[2:],
+                    #     mode="nearest",
+                    # )
                 with torch.cuda.amp.autocast(enabled=half):
                     ## cps loss
                     cps_loss = criterion(pred_1, pseudo_2) + criterion(pred_2, pseudo_1)

@@ -20,6 +20,6 @@
         "save_dir":"/content/drive/MyDrive/semi_sup_test/CWFID",
         "device":0,
         "batch_size":1,
-        "weights":"/content/drive/MyDrive/semi_sup_train/CWFID/Unet+CSP_num306/ckpoints"
+        "weights":"/content/drive/MyDrive/semi_sup_train/CWFID/Unet+CSP_num30_barlow10/ckpoints"
     }
 }

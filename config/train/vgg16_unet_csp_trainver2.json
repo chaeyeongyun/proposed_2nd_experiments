@@ -1,6 +1,6 @@
 {   
-    "project_name":"Unet+CSP_num30_trainver2",
-    "wandb_logging":true,
+    "project_name":"Unet+CSP_num30_trainver2_unreliable",
+    "wandb_logging":false,
     "num_classes":3,
     "pixel_to_label":{
         "0":0,
@@ -29,6 +29,10 @@
             "name":"warmuppoly",
             "warmup_epoch":0,
             "lr_power":0.9
+        },
+        "unsup_loss":{
+            "weight":1,
+            "drop_percent":20
         },
         "half":true,
         "init_weights":true,

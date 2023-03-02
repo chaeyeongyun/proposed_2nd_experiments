@@ -166,6 +166,6 @@ if __name__ == '__main__':
     parser.add_argument('--config_path', default='./config/test/vgg16_unet_cwfid_test.json')
     opt = parser.parse_args()
     cfg = get_config_from_json(opt.config_path)
-    
+    print(cfg)
     main(cfg)
    

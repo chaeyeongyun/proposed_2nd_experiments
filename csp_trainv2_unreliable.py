@@ -18,8 +18,7 @@ from utils.processing import img_to_label
 from utils.lr_schedulers import WarmUpPolyLR
 
 from data.dataset import BaseDataset
-from data.augmentations import CutMix
-from loss import make_loss, make_unreliable_mask
+from loss import make_loss, make_unreliable_weight
 from metrics import Measurement
 
 # 일단 no cutmix version
@@ -92,9 +91,6 @@ def train(cfg):
             with torch.cuda.amp.autocast(enabled=half):
                 pred_sup_1 = model_1(l_input)
                 pred_sup_2 = model_2(l_input)
-            ## predict in unsupervised manner ##
-            
-            with torch.cuda.amp.autocast(enabled=half):
                 ## supervised loss
                 sup_loss_1 = criterion(pred_sup_1, l_target)
                 sup_loss_2 = criterion(pred_sup_2, l_target)
@@ -118,8 +114,8 @@ def train(cfg):
             pseudo_2 = torch.argmax(pred_ul_2, dim=1).long()
             percent_unreliable = (100 - cfg.train.unsup_loss.drop_percent) * (1-epoch/num_epochs)
             drop_percent = 100 - percent_unreliable
-            weight_1 = make_unreliable_mask(pred_ul_1, pseudo_2, pred_ul_2, drop_percent)
-            weight_2 = make_unreliable_mask(pred_ul_2, pseudo_1, pred_ul_1, drop_percent)
+            weight_1 = make_unreliable_weight(pred_ul_1, pseudo_2.clone(), pred_ul_2, drop_percent).to(device)
+            weight_2 = make_unreliable_weight(pred_ul_2, pseudo_1.clone(), pred_ul_1, drop_percent).to(device)
             with torch.cuda.amp.autocast(enabled=half):
                 ## cps loss
                 cps_loss = weight_1*criterion(pred_ul_1, pseudo_2) + weight_2*criterion(pred_ul_2, pseudo_1)
@@ -183,7 +179,7 @@ def train(cfg):
     
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--config_path', default='./config/train/vgg16_unet_csp_trainver2_barlow.json')
+    parser.add_argument('--config_path', default='./config/train/vgg16_unet_csp_trainver2.json')
     opt = parser.parse_args()
     cfg = get_config_from_json(opt.config_path)
     

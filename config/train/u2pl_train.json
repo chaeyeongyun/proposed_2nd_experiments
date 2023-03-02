@@ -31,7 +31,10 @@
             "warmup_epoch":0,
             "lr_power":0.9
         },
-        "strong_aug":["cutmix"],
+        "strong_aug":{
+            "name":"cutmix",
+            "ratio":0.2
+        },
         "half":true,
         "init_weights":true,
         "bn_eps":1e-5,
