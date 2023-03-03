@@ -16,13 +16,13 @@ import models
 from utils.logging import Logger, save_ckpoints, load_ckpoints
 from utils.load_config import get_config_from_json
 from utils.env_utils import device_setting
-from utils.processing import img_to_label
+from utils.processing import img_to_label, label_to_onehot, save_result_img
 from utils.lr_schedulers import WarmUpPolyLR
 
 from data.dataset import BaseDataset
 from data.augmentations import augmentation
 from metrics import Measurement
-from loss import make_loss, make_unreliable_weight
+from loss import make_loss, make_unreliable_weight, compute_contra_memobank_loss, cal_unsuploss_weight
 
 # 일단 no cutmix version
 def train(cfg):
@@ -30,6 +30,8 @@ def train(cfg):
     os.makedirs(save_dir)
     ckpoints_dir = os.path.join(save_dir, 'ckpoints')
     os.mkdir(ckpoints_dir)
+    img_dir = os.path.join(save_dir, 'imgs')
+    os.mkdir(img_dir)
     
     half=cfg.train.half
     logger = Logger(cfg) if cfg.wandb_logging else None
@@ -59,8 +61,9 @@ def train(cfg):
         student.backbone.load_state_dict(torch.load(cfg.model.backbone.pretrain_weights))
         teacher.backbone.load_state_dict(torch.load(cfg.model.backbone.pretrain_weights))
     
-    criterion = make_loss(cfg.train.criterion, num_classes)
+    criterion = make_loss(cfg.train.criterion, num_classes, ignore_index=255)
     unsup_loss_weight = cfg.train.unsup_loss.weight
+    contra_loss_weight = cfg.train.contrastive_loss.weight
     sup_dataset = BaseDataset(os.path.join(cfg.train.data_dir, 'train'), split='labelled', resize=cfg.resize)
     unsup_dataset = BaseDataset(os.path.join(cfg.train.data_dir, 'train'), split='unlabelled', resize=cfg.resize)
     
@@ -71,7 +74,7 @@ def train(cfg):
     lr_scheduler = WarmUpPolyLR(cfg.train.learning_rate, lr_power=cfg.train.lr_scheduler.lr_power, 
                                 total_iters=len(unsup_loader)*num_epochs,
                                 warmup_steps=len(unsup_loader)*cfg.train.lr_scheduler.warmup_epoch)
-    
+    ema_decay_origin = cfg.train.ema_decay
     # TODO: different lr in encoder and decoder ()
     optimizer = torch.optim.Adam(student.parameters(), lr=cfg.train.learning_rate, betas=(0.9, 0.999))
     
@@ -81,7 +84,7 @@ def train(cfg):
     queue_size = []
 
     for i in range(num_classes):
-        memobank.append([torch.zeros(0, 256)])
+        memobank.append([torch.zeros(0, 64)])
         queue_size.append(30000)
         queue_ptrlis.append(torch.zeros(1, dtype=torch.long))
     queue_size[0] = 50000
@@ -108,15 +111,17 @@ def train(cfg):
         pbar =  tqdm(range(len(unsup_loader)))
         for batch_idx in pbar:
             sup_dict, unsup_dict = next(trainloader)
-            l_input, l_target = sup_dict['img'], sup_dict['target']
-            l_target = img_to_label(l_target, cfg.pixel_to_label)
-            l_input, l_target = l_input.to(device), l_target.to(device)
+            l_input, l_target = sup_dict['img'].to(device), sup_dict['target']
+            l_target = img_to_label(l_target, cfg.pixel_to_label).to(device)
             ul_input = unsup_dict['img'].to(device)
             if epoch < cfg.train.sup_only_epoch:
                 with torch.cuda.amp.autocast(enabled=half):
-                    pred_l = student(l_input)
-                    sup_loss = criterion(pred_l, l_target)
-                    unsup_loss, cont_loss = torch.Tensor(0), torch.Tensor(0)
+                    l_pred_st = student(l_input)
+                    sup_loss = criterion(l_pred_st, l_target)
+                    # TODO: 오류 날 가능성 매우 높
+                    unsup_loss = 0 * l_pred_st.sum()
+                    contra_loss = 0 * l_pred_st.sum()
+                    
             else:
                 if epoch == cfg.train.sup_only_epoch:
                     # copy student parameters to teacher
@@ -143,25 +148,29 @@ def train(cfg):
                 all_input = torch.cat((l_input, ul_input_aug), dim=0)
                 with torch.cuda.amp.autocast(enabled=half):
                     # student inference
-                    pred_student = student(all_input)
-                    l_pred_st, ul_pred_st = pred_student[:num_label], pred_student[num_label:]
+                    output = student(all_input, return_rep=True)
+                    pred_st, rep_st = output['pred'], output['rep']
+                    l_pred_st, ul_pred_st = pred_st[:num_label], pred_st[num_label:]
                     sup_loss = criterion(l_pred_st, l_target)
                 # teacher forward
                 teacher.train()
                 with torch.no_grad():
-                    pred_teacher = F.softmax(teacher(all_input))
-                    score_l_tc, score_ul_tc = pred_teacher[:num_label], pred_teacher[num_label:]
+                    out_t = teacher(all_input, return_rep=True)
+                    pred_t, rep_t = out_t['pred'], out_t['rep']
+                    score_t = F.softmax(pred_t, dim=1)
+                    l_score_t, ul_score_t = score_t[:num_label], score_t[:num_label:]
+                    ul_pred_t = pred_t[num_label:]
                     
                 # TODO: unsupervised_loss
                 percent_unreliable = cfg.train.unsup_loss.drop_percent * (1-epoch/num_epochs)
                 drop_percent = 100 - percent_unreliable
-                unreliable_weight = make_unreliable_weight(ul_pred_st, pseudo_ul_aug.clone(), score_ul_tc, drop_percent)
+                unreliable_weight = cal_unsuploss_weight(ul_pred_st, pseudo_ul_aug.clone(), drop_percent, ul_pred_t.detach())
                 with torch.cuda.amp.autocast(enabled=half):
                     unsup_loss = unsup_loss_weight*unreliable_weight* criterion(ul_pred_st, pseudo_ul_aug)
                 # contrastive loss
                 alpha_t = cfg.train.contrastive_loss.low_entropy_threshold * (1-epoch/num_epochs)
                 with torch.no_grad():
-                    prob = torch.softmax(score_ul_tc, dim=1)
+                    prob = torch.softmax(ul_pred_t, dim=1)
                     entropy = -torch.sum(prob * torch.log(prob + 1e-10), dim=1)
 
                     low_thresh = np.percentile(
@@ -188,7 +197,7 @@ def train(cfg):
                     # low_mask_all = F.interpolate(
                     #     low_mask_all, size=pred_student.shape[2:], mode="nearest"
                     # )
-                    if cfg.train.contrastive_loss.get("negative_high_entropy", True):
+                    if cfg.train.contrastive_loss.negative_high_entropy:
                         high_mask_all = torch.cat(
                             (
                                 (l_target.unsqueeze(1) != 255).float(),
@@ -205,77 +214,93 @@ def train(cfg):
                                 .cuda(),
                             ),
                         )
-                    # TODO: onehot바꾸는거 추가하고 contrastive loss / memorybank 부분 만들기 그리고 위에 있는거 도대체 뭔지 코드 분석좀 하기 tlqkf...
-                    # high_mask_all = F.interpolate(
-                    #     high_mask_all, size=pred_student.shape[2:], mode="nearest"
-                    # )  # down sample
-
-                    # # down sample and concat
-                    # label_l_small = F.interpolate(
-                    #     label_onehot(label_l, cfg["net"]["num_classes"]),
-                    #     size=pred_all.shape[2:],
-                    #     mode="nearest",
-                    # )
-                    # label_u_small = F.interpolate(
-                    #     label_onehot(label_u_aug, cfg["net"]["num_classes"]),
-                    #     size=pred_all.shape[2:],
-                    #     mode="nearest",
-                    # )
-                with torch.cuda.amp.autocast(enabled=half):
-                    ## cps loss
-                    cps_loss = criterion(pred_1, pseudo_2) + criterion(pred_2, pseudo_1)
-                    ## supervised loss
-                    sup_loss_1 = criterion(pred_sup_1, l_target)
-                    sup_loss_2 = criterion(pred_sup_2, l_target)
-                    sup_loss = sup_loss_1 + sup_loss_2
+                    l_target_onehot = label_to_onehot(l_target, num_classes=num_classes).to(device)
+                    pseudo_ul_aug_onehot = label_to_onehot(pseudo_ul_aug,  num_classes=num_classes).to(device)
                     
-                    ## learning rate update
-                    current_idx = epoch * len(unsup_loader) + batch_idx
-                    learning_rate = lr_scheduler.get_lr(current_idx)
-                    # update the learning rate
-                    optimizer_1.param_groups[0]['lr'] = learning_rate
-                    optimizer_2.param_groups[0]['lr'] = learning_rate
-                        
-            loss = sup_loss + cps_loss_weight*cps_loss
-            
+                with torch.cuda.amp.autocast(enabled=half):
+                    prototype, new_keys, contra_loss = compute_contra_memobank_loss(
+                            rep_st,
+                            l_target_onehot.long(),
+                            pseudo_ul_aug_onehot.long(),
+                            l_score_t.detach(),
+                            ul_score_t.detach(),
+                            low_mask_all,
+                            high_mask_all,
+                            cfg.train.contrastive_loss,
+                            memobank,
+                            queue_ptrlis,
+                            queue_size,
+                            rep_t.detach(),
+                            prototype,
+                        )
+                    contra_loss = contra_loss_weight * contra_loss
+                    
+            with torch.cuda.amp.autocast(enabled=half):
+                loss = sup_loss + unsup_loss + contra_loss
+            ## learning rate update
+            current_idx = epoch * len(unsup_loader) + batch_idx
+            learning_rate = lr_scheduler.get_lr(current_idx)
+            # update the learning rate
+            optimizer.param_groups[0]['lr'] = learning_rate
+                    
             scaler.scale(loss).backward()
-            scaler.step(optimizer_1)
-            scaler.step(optimizer_2)
+            scaler.step(optimizer)
             scaler.update()
+            # update teacher model with EMA
+            if epoch >= cfg.train.sup_only_epoch:
+                with torch.no_grad():
+                    ema_decay = min(
+                        1
+                        - 1
+                        / (
+                            current_idx
+                            - len(sup_loader) * cfg.train.sup_only_epoch
+                            + 1
+                        ),
+                        ema_decay_origin,
+                    )
+                    for t_params, s_params in zip(
+                        teacher.parameters(), student.parameters()
+                    ):
+                        t_params.data = (
+                            ema_decay * t_params.data + (1 - ema_decay) * s_params.data
+                        )
             
-            
-            step_miou, iou_list = measurement.miou(measurement._make_confusion_matrix(pred_sup_1.detach().cpu().numpy(), l_target.detach().cpu().numpy()))
+            step_miou, iou_list = measurement.miou(measurement._make_confusion_matrix(l_pred_st.detach().cpu().numpy(), l_target.detach().cpu().numpy()))
             sum_miou += step_miou
             sum_loss += loss.item()
-            sum_cps_loss += cps_loss.item()
-            sum_sup_loss_1 += sup_loss_1.item()
-            sum_sup_loss_2 += sup_loss_2.item()
+            sum_sup_loss += sup_loss.item()
+            sum_unsup_loss += unsup_loss.item()
+            sum_cont_loss += contra_loss.item()
             back_iou += iou_list[0]
             weed_iou += iou_list[1]
             crop_iou += iou_list[2]
-            print_txt = f"[Epoch{epoch}/{cfg.train.num_epochs}][Iter{batch_idx+1}/{len(unsup_loader)}] lr={learning_rate:.2f}" \
-                            + f"miou={step_miou}, sup_loss_1={sup_loss_1:.4f}, sup_loss_2={sup_loss_2:.4f}, cps_loss={cps_loss:.4f}"
+            print_txt = f"[Epoch{epoch}/{cfg.train.num_epochs}][Iter{batch_idx+1}/{len(unsup_loader)}] lr={learning_rate:.6f}" \
+                            + f"miou={step_miou:.4f}, sup_loss={sup_loss:.4f}, unsup_loss_2={unsup_loss:.4f}, contra_loss={contra_loss:.6f}"
             pbar.set_description(print_txt, refresh=False)
             log_txt.write(print_txt)
         
         ## end epoch ## 
         back_iou, weed_iou, crop_iou = back_iou / len(unsup_loader), weed_iou / len(unsup_loader), crop_iou / len(unsup_loader)
-        cps_loss = sum_cps_loss / len(unsup_loader)
-        sup_loss_1 = sum_sup_loss_1 / len(unsup_loader)
-        sup_loss_2 = sum_sup_loss_2 / len(unsup_loader)
-        loss = loss / len(unsup_loader)
+        contra_loss = sum_cont_loss / len(unsup_loader)
+        sup_loss = sum_sup_loss / len(unsup_loader)
+        unsup_loss = sum_unsup_loss / len(unsup_loader)
+        loss = sum_loss / len(unsup_loader)
         miou = sum_miou / len(unsup_loader)
         
+        if cfg.train.save_img:
+            save_result_img(l_input.detach().cpu().numpy(), l_target.detach().cpu().numpy(), l_pred_st.detach().cpu().numpy(), 
+                            filename=[f"ex{i}.png" for i in range(len(l_input))],
+                            save_dir=img_dir)
         print_txt = f"[Epoch{epoch}]" \
-                            + f"miou=miou, sup_loss_1={sup_loss_1:.4f}, sup_loss_2={sup_loss_2:.4f}, cps_loss={cps_loss:.4f}"
+                            + f"miou={miou:.4f}, sup_loss={sup_loss:.4f}, unsup_loss_2={unsup_loss:.4f}, contra_loss={contra_loss:.6f}, loss:{loss:.4f}"
         log_txt.write(print_txt)
         if epoch % 10 == 0:
-            save_ckpoints(student.state_dict(),
-                        teacher.state_dict(),
-                        epoch,
-                        batch_idx,
-                        optimizer_1.state_dict(),
-                        optimizer_2.state_dict(),
+            torch.save({"student":student.state_dict(),
+                        "teacher":teacher.state_dict(),
+                        "epoch":epoch,
+                        "batch_idx":batch_idx,
+                        "optimizer":optimizer.state_dict()},
                         os.path.join(ckpoints_dir, f"{epoch}ep.pth"))
         # wandb logging
         if logger is not None:
@@ -291,7 +316,7 @@ def train(cfg):
     
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--config_path', default='./config/train/vgg16_unet_csp_barlow.json')
+    parser.add_argument('--config_path', default='./config/train/u2pl_train.json')
     opt = parser.parse_args()
     cfg = get_config_from_json(opt.config_path)
     

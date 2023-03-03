@@ -32,7 +32,7 @@ class UNetDecoder(nn.Module):
         
         self.classifier = nn.Conv2d(c2//2, num_classes, kernel_size=1, bias=False)
         
-    def forward(self, x, pass1, pass2, pass3, pass4):
+    def forward(self, x, pass1, pass2, pass3, pass4, return_rep=False):
         x = self.conv1(x)
         x = torch.cat((self.upsample(x), pass4), dim=1)
         x = self.conv2(x)
@@ -41,8 +41,14 @@ class UNetDecoder(nn.Module):
         x = torch.cat((self.upsample(x), pass2), dim=1)
         x = self.conv4(x)
         x = torch.cat((self.upsample(x), pass1), dim=1)
-        x = self.conv5(x)
-        output = self.classifier(x)
+        rep = self.conv5(x)
+        out = self.classifier(rep)
+        if return_rep:
+            output = dict()
+            output['rep'] = rep
+            output['pred'] = out
+        else: 
+            output = out
         return output
         
         
@@ -62,8 +68,8 @@ class UNet(nn.Module):
             enc_out_channels = self.backbone.enc_out_channels
             self.out_keys = ['conv1', 'conv2', 'conv3', 'conv4', 'conv5']
         self.decoder = UNetDecoder(enc_out_channels, num_classes)
-    
-    def forward(self, x):
+
+    def forward(self, x,  return_rep=False):
         enc_out = [self.backbone.forward_as_dict(x)[key] for key in self.out_keys]
-        output = self.decoder(enc_out[-1], *enc_out[:4])
+        output = self.decoder(enc_out[-1], *enc_out[:4], return_rep)
         return output

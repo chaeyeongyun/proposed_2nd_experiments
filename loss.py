@@ -7,12 +7,12 @@ import numpy as np
 
 from utils.processing import label_to_onehot
 
-def make_loss(loss_name:str, num_classes):
+def make_loss(loss_name:str, num_classes:int, ignore_index:int):
     loss_dict = {'cross_entropy':nn.CrossEntropyLoss,
                  'dice_loss':DiceLoss,
                  'focal_loss':FocalLoss}
     if loss_name == 'cross_entropy':
-        return loss_dict[loss_name]()
+        return loss_dict[loss_name](ignore_index=ignore_index)
     else:
         return loss_dict[loss_name](num_classes=num_classes)
     
@@ -43,7 +43,7 @@ def dice_coefficient(pred:torch.Tensor, target:torch.Tensor, num_classes:int):
     return dice_coefficient
         
         
-def dice_loss(pred, target, num_classes, weights:tuple=None):
+def dice_loss(pred, target, num_classes, weights:tuple=None, ignore_index=None):
     if not isinstance(pred, torch.Tensor) :
         raise TypeError(f"Input type is not a torch.Tensor. Got {type(pred)}")
 
@@ -61,16 +61,17 @@ def dice_loss(pred, target, num_classes, weights:tuple=None):
     return dice_loss
 
 class DiceLoss(nn.Module):
-    def __init__(self, num_classes, weights:tuple=None):
+    def __init__(self, num_classes, weights:tuple=None, ignore_index=None):
         super().__init__()
         self.num_classes = num_classes
         self.weights = weights
+        self.ignore_index = ignore_index
     def forward(self, pred, target):
-        return dice_loss(pred, target, self.num_classes, weights=self.weights)
+        return dice_loss(pred, target, self.num_classes, weights=self.weights, ignore_index=self.ignore_index)
 
   
 ## focal loss   
-def focal_loss(pred:torch.Tensor, target:torch.Tensor, alpha, gamma, num_classes, ignore_idx=None, reduction="sum"):
+def focal_loss(pred:torch.Tensor, target:torch.Tensor, alpha, gamma, num_classes, ignore_index=None, reduction="sum"):
     assert pred.shape[0] == target.shape[0],\
         "pred tensor and target tensor must have same batch size"
     
@@ -104,10 +105,10 @@ def focal_loss(pred:torch.Tensor, target:torch.Tensor, alpha, gamma, num_classes
     
 
 class FocalLoss(nn.Module):
-    def __init__(self, num_classes, alpha=0.25, gamma=2, ignore_idx=None, reduction='sum'):
+    def __init__(self, num_classes, alpha=0.25, gamma=2, ignore_index=None, reduction='sum'):
         super().__init__()
         self.num_classes = num_classes
-        self.ignore_idx = ignore_idx
+        self.ignore_index = ignore_index
         self.alpha = alpha
         self.gamma = gamma
         self.reduction = reduction
@@ -118,7 +119,7 @@ class FocalLoss(nn.Module):
         else:
             pred = F.softmax(pred, dim=1).float()
         
-        return focal_loss(pred, target, self.alpha, self.gamma, self.num_classes, self.ignore_idx, self.reduction)
+        return focal_loss(pred, target, self.alpha, self.gamma, self.num_classes, self.ignore_index, self.reduction)
 
 def make_unreliable_weight(pred_1, target, pred_2, percent):
     # student 예측, teacher label, drop percent, teacher pred
@@ -136,6 +137,45 @@ def make_unreliable_weight(pred_1, target, pred_2, percent):
         target[thresh_mask] = 255
         weight = batch_size * h * w / torch.sum(target != 255)
     return weight
+
+def cal_unsuploss_weight(pred, target, percent, pred_teacher):
+    batch_size, num_class, h, w = pred.shape
+
+    with torch.no_grad():
+        # drop pixels with high entropy
+        prob = torch.softmax(pred_teacher, dim=1)
+        entropy = -torch.sum(prob * torch.log(prob + 1e-10), dim=1)
+
+        thresh = np.percentile(
+            entropy[target != 255].detach().cpu().numpy().flatten(), percent
+        )
+        thresh_mask = entropy.ge(thresh).bool() * (target != 255).bool()
+
+        target[thresh_mask] = 255
+        weight = batch_size * h * w / torch.sum(target != 255)
+    return weight
+
+
+
+@torch.no_grad()
+def dequeue_and_enqueue(keys, queue, queue_ptr, queue_size):
+    # gather keys before updating queue
+    keys = keys.detach().clone().cpu()
+
+    batch_size = keys.shape[0]
+
+    ptr = int(queue_ptr)
+
+    queue[0] = torch.cat((queue[0], keys.cpu()), dim=0)
+    if queue[0].shape[0] >= queue_size:
+        queue[0] = queue[0][-queue_size:, :]
+        ptr = queue_size
+    else:
+        ptr = (ptr + batch_size) % queue_size  # move pointer
+
+    queue_ptr[0] = ptr
+
+    return batch_size
 ### contrastive loss / memory bank
 def compute_contra_memobank_loss(
     rep,
@@ -155,12 +195,12 @@ def compute_contra_memobank_loss(
 ):
     # current_class_threshold: delta_p (0.3)
     # current_class_negative_threshold: delta_n (1)
-    current_class_threshold = cfg["current_class_threshold"]
-    current_class_negative_threshold = cfg["current_class_negative_threshold"]
-    low_rank, high_rank = cfg["low_rank"], cfg["high_rank"]
-    temp = cfg["temperature"]
-    num_queries = cfg["num_queries"]
-    num_negatives = cfg["num_negatives"]
+    current_class_threshold = cfg.current_class_threshold
+    current_class_negative_threshold = cfg.current_class_negative_threshold
+    low_rank, high_rank = cfg.low_rank, cfg.high_rank
+    temp = cfg.temperature
+    num_queries = cfg.num_queries
+    num_negatives = cfg.num_negatives
 
     num_feat = rep.shape[1]
     num_labeled = label_l.shape[0]

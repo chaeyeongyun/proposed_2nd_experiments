@@ -26,9 +26,9 @@ def augmentation(input:torch.Tensor, label:torch.Tensor, logits:torch.Tensor, au
 
 def make_cutout_mask(img_size:Iterable[int], ratio):
     cutout_area = img_size[0]*img_size[1]*ratio
-    cut_w = random.randint(img_size[1]*ratio, img_size[1])
-    cut_h = cutout_area//cut_w
-    x1, y1 = random.randint(0, img_size[1]-cut_w), random.randint(0, img_size[0]-cut_h)
+    cut_w = random.randint(int(img_size[1]*ratio), img_size[1])
+    cut_h = int(cutout_area//cut_w)
+    x1, y1 = random.randint(0, img_size[1]-cut_w-1), random.randint(0, img_size[0]-cut_h-1)
     mask = torch.ones(tuple(img_size))
     mask[y1:y1+cut_h, x1:x1+cut_w] = 0
     return mask.long()

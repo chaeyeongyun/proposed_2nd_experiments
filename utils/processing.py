@@ -19,7 +19,7 @@ def label_to_onehot(target:torch.Tensor, num_classes:int):
     """
     onehot = torch.zeros((target.shape[0], num_classes, target.shape[1], target.shape[2]), dtype=torch.float64)
     for c in range(num_classes):
-        onehot[:, c, :, :] += (target==c)
+        onehot[:, c, :, :] = (target==c)
     return onehot
 
 def pred_to_colormap(pred:np.ndarray, colormap:np.ndarray):
