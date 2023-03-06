@@ -1,5 +1,5 @@
 {   
-    "project_name":"Unet+U2PL_num30",
+    "project_name":"Unet+U2PL_num30_barlow",
     "wandb_logging":true,
     "num_classes":3,
     "pixel_to_label":{
@@ -12,7 +12,7 @@
         "in_channels":3,
         "backbone":{
             "name":"vgg16",
-            "pretrain_weights":null
+            "pretrain_weights":"/content/drive/MyDrive/self_supervised/CWFID/vgg16_0/ckpoints/150ep.pth"
         },
         "seg_head":{
             "name":"unet"

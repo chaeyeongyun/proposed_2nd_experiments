@@ -26,12 +26,14 @@ from loss import make_loss, make_unreliable_weight, compute_contra_memobank_loss
 
 # 일단 no cutmix version
 def train(cfg):
-    save_dir = os.path.join(cfg.train.save_dir, cfg.project_name+str(len(os.listdir(cfg.train.save_dir))))
-    os.makedirs(save_dir)
-    ckpoints_dir = os.path.join(save_dir, 'ckpoints')
-    os.mkdir(ckpoints_dir)
-    img_dir = os.path.join(save_dir, 'imgs')
-    os.mkdir(img_dir)
+    if cfg.wandb_logging:
+        save_dir = os.path.join(cfg.train.save_dir, cfg.project_name+str(len(os.listdir(cfg.train.save_dir))))
+        os.makedirs(save_dir)
+        ckpoints_dir = os.path.join(save_dir, 'ckpoints')
+        os.mkdir(ckpoints_dir)
+        img_dir = os.path.join(save_dir, 'imgs')
+        os.mkdir(img_dir)
+        log_txt = open(os.path.join(save_dir, 'log_txt'), 'w')
     
     half=cfg.train.half
     logger = Logger(cfg) if cfg.wandb_logging else None
@@ -40,7 +42,6 @@ def train(cfg):
     num_epochs = cfg.train.num_epochs
     device = device_setting(cfg.train.device)
     measurement = Measurement(num_classes)
-    log_txt = open(os.path.join(save_dir, 'log_txt'), 'w')
     
     student = models.make_model(cfg.model.backbone.name, cfg.model.seg_head.name, cfg.model.in_channels, num_classes).to(device)
     teacher = models.make_model(cfg.model.backbone.name, cfg.model.seg_head.name, cfg.model.in_channels, num_classes).to(device)
@@ -76,7 +77,17 @@ def train(cfg):
                                 warmup_steps=len(unsup_loader)*cfg.train.lr_scheduler.warmup_epoch)
     ema_decay_origin = cfg.train.ema_decay
     # TODO: different lr in encoder and decoder ()
-    optimizer = torch.optim.Adam(student.parameters(), lr=cfg.train.learning_rate, betas=(0.9, 0.999))
+    decoder_lr_times = cfg.train.get("decoder_lr_times", False)
+    if decoder_lr_times:
+        param_list = []
+        backbone = student.backbone
+        decoder = student.decoder
+        param_list.append(dict(params=backbone.parameters(), lr=cfg.train.learning_rate))
+        param_list.append(dict(params=decoder.parameters(), lr=cfg.train.learning_rate*decoder_lr_times))
+        optimizer = torch.optim.Adam(param_list, betas=(0.9, 0.999))
+        
+    else:
+        optimizer = torch.optim.Adam(student.parameters(), lr=cfg.train.learning_rate, betas=(0.9, 0.999))
     
     # TODO: build class-wise memory bank 관련 함수 형성
     memobank = []
@@ -118,7 +129,6 @@ def train(cfg):
                 with torch.cuda.amp.autocast(enabled=half):
                     l_pred_st = student(l_input)
                     sup_loss = criterion(l_pred_st, l_target)
-                    # TODO: 오류 날 가능성 매우 높
                     unsup_loss = 0 * l_pred_st.sum()
                     contra_loss = 0 * l_pred_st.sum()
                     
@@ -174,10 +184,10 @@ def train(cfg):
                     entropy = -torch.sum(prob * torch.log(prob + 1e-10), dim=1)
 
                     low_thresh = np.percentile(
-                        entropy[pseudo_ul_aug != 255].cpu().numpy().flatten(), alpha_t
+                        entropy[pseudo_ul_aug != 255].cpu().numpy().flatten(), alpha_t # entorpy 에서 alpha_t % 에 해당하는 값이 하한값
                     )
                     low_entropy_mask = (
-                        entropy.le(low_thresh).float() * (pseudo_ul_aug != 255).bool()
+                        entropy.le(low_thresh).float() * (pseudo_ul_aug != 255).bool() # ndarray.le는 self<=value를 반환한다.
                     )
 
                     high_thresh = np.percentile(
@@ -185,7 +195,7 @@ def train(cfg):
                         100 - alpha_t,
                     )
                     high_entropy_mask = (
-                        entropy.ge(high_thresh).float() * (pseudo_ul_aug != 255).bool()
+                        entropy.ge(high_thresh).float() * (pseudo_ul_aug != 255).bool() # ndarray.ge는 self>=value를 반환한다.
                     )
 
                     low_mask_all = torch.cat(
@@ -232,6 +242,7 @@ def train(cfg):
                             queue_size,
                             rep_t.detach(),
                             prototype,
+                            i_iter=epoch * len(unsup_loader) + batch_idx
                         )
                     contra_loss = contra_loss_weight * contra_loss
                     
@@ -278,7 +289,7 @@ def train(cfg):
             print_txt = f"[Epoch{epoch}/{cfg.train.num_epochs}][Iter{batch_idx+1}/{len(unsup_loader)}] lr={learning_rate:.6f}" \
                             + f"miou={step_miou:.4f}, sup_loss={sup_loss:.4f}, unsup_loss_2={unsup_loss:.4f}, contra_loss={contra_loss:.6f}"
             pbar.set_description(print_txt, refresh=False)
-            log_txt.write(print_txt)
+            if logger != None: log_txt.write(print_txt)
         
         ## end epoch ## 
         back_iou, weed_iou, crop_iou = back_iou / len(unsup_loader), weed_iou / len(unsup_loader), crop_iou / len(unsup_loader)
@@ -288,14 +299,18 @@ def train(cfg):
         loss = sum_loss / len(unsup_loader)
         miou = sum_miou / len(unsup_loader)
         
-        if cfg.train.save_img:
-            save_result_img(l_input.detach().cpu().numpy(), l_target.detach().cpu().numpy(), l_pred_st.detach().cpu().numpy(), 
-                            filename=[f"ex{i}.png" for i in range(len(l_input))],
-                            save_dir=img_dir)
+        if cfg.train.save_img and epoch >= cfg.train.sup_only_epoch and logger!=None:
+            # save_result_img(l_input.detach().cpu().numpy(), l_target.detach().cpu().numpy(), ul_input_aug.detach().cpu().numpy(), 
+            #                 filename=[f"{epoch}ep_ex{i}.png" for i in range(len(l_input))],
+            #                 save_dir=img_dir)
+            for i in range(len(ul_input_aug)): 
+                cpu_ul_input_aug = ul_input_aug.detach().cpu().numpy()
+                cpu_ul_input_aug = cpu_ul_input_aug.transpose(0, 2, 3, 1) #(N H W C)
+                plt.imsave(os.path.join(img_dir, f'{epoch}ep_aug_sample_{i}.png'), cpu_ul_input_aug[i])
         print_txt = f"[Epoch{epoch}]" \
                             + f"miou={miou:.4f}, sup_loss={sup_loss:.4f}, unsup_loss_2={unsup_loss:.4f}, contra_loss={contra_loss:.6f}, loss:{loss:.4f}"
-        log_txt.write(print_txt)
-        if epoch % 10 == 0:
+        if logger!=None: log_txt.write(print_txt)
+        if epoch % 10 == 0 and logger != None:
             torch.save({"student":student.state_dict(),
                         "teacher":teacher.state_dict(),
                         "epoch":epoch,
@@ -312,11 +327,12 @@ def train(cfg):
             
             logger.logging(epoch=epoch)
             logger.config_update()
-    log_txt.close()
+            
+    if logger != None: log_txt.close()
     
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--config_path', default='./config/train/u2pl_train.json')
+    parser.add_argument('--config_path', default='./config/train/u2pl_train_barlow.json')
     opt = parser.parse_args()
     cfg = get_config_from_json(opt.config_path)
     

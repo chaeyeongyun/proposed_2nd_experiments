@@ -39,7 +39,12 @@ def test_folder(cfg):
     weights_list = glob(os.path.join(cfg.test.weights, '*.pth'))
     best_miou = 0
     for weights in weights_list:
-        model.load_state_dict(torch.load(weights)['model_1'])
+        try:
+            print("Loading model...<model_1>")
+            model.load_state_dict(torch.load(weights)['model_1'])
+        except:
+            print("Loading model...<student>")
+            model.load_state_dict(torch.load(weights)['student'])
         model.eval()
         test_acc, test_miou = 0, 0
         test_precision, test_recall, test_f1score = 0, 0, 0
@@ -98,7 +103,12 @@ def test(cfg):
     
     device = device_setting(cfg.test.device)
     model = models.make_model(cfg.model.backbone.name, cfg.model.seg_head.name, cfg.model.in_channels, num_classes).to(device)
-    model.load_state_dict(torch.load(cfg.test.weights)['model_1'])
+    try:
+        print("Loading model...<model_1>")
+        model.load_state_dict(torch.load(cfg.test.weights)['model_1'])
+    except:
+        print("Loading model...<student>")
+        model.load_state_dict(torch.load(cfg.test.weights)['student'])
     test_data = BaseDataset(os.path.join(cfg.test.data_dir, 'test'), split='labelled', resize=cfg.resize)
     testloader = DataLoader(test_data, 1, shuffle=False)
     
@@ -166,6 +176,9 @@ if __name__ == '__main__':
     parser.add_argument('--config_path', default='./config/test/vgg16_unet_cwfid_test.json')
     opt = parser.parse_args()
     cfg = get_config_from_json(opt.config_path)
-    print(cfg)
-    main(cfg)
+    folders = ['/content/drive/MyDrive/semi_sup_train/CWFID/Unet+U2PL_num30_barlow12/ckpoints', '/content/drive/MyDrive/semi_sup_train/CWFID/Unet+U2PL_num3013/ckpoints']
+    for folder in folders:
+        cfg.test.weights=folder
+        print(cfg)
+        main(cfg)
    
