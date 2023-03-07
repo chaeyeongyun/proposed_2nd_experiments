@@ -5,12 +5,12 @@ import os
 
 #TODO: 개선/ 추가
 class Logger():
-    def __init__(self, cfg):
+    def __init__(self, cfg, logger_name):
         wandb.init(project=cfg.project_name,
-                   name=cfg.project_name+str(len(os.listdir(cfg.train.save_dir))-1)
+                   name=logger_name
                 #    notes="baseline",
                 #    tags = ["csp+unet+cutmix"]
-                )
+        )
         # config setting
         self.config_dict = dict()
         for key in cfg.train.wandb_config:
@@ -36,6 +36,7 @@ class Logger():
     # def end(self, summary_dict):
     #     for key, value in summary_dict.items():
     #         wandb.run.summary[key] = value
+
 def save_ckpoints(model_1, model_2, epoch, batch_idx, optimizer_1, optimizer_2, filepath):
     torch.save({'model_1':model_1,
                'model_2':model_2,

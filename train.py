@@ -24,12 +24,14 @@ from metrics import Measurement
 
 # 일단 no cutmix version
 def train(cfg):
-    save_dir = os.path.join(cfg.train.save_dir, cfg.project_name+str(len(os.listdir(cfg.train.save_dir))))
+    logger_name = cfg.project_name+str(len(os.listdir(cfg.train.save_dir)))
+    save_dir = os.path.join(cfg.train.save_dir, logger_name)
     os.makedirs(save_dir)
     ckpoints_dir = os.path.join(save_dir, 'ckpoints')
     os.mkdir(ckpoints_dir)
     log_txt = open(os.path.join(save_dir, 'log_txt'), 'w')
-    logger = Logger(cfg) if cfg.wandb_logging else None
+    
+    logger = Logger(cfg, logger_name) if cfg.wandb_logging else None
     num_classes = cfg.num_classes
     batch_size = cfg.train.batch_size
     num_epochs = cfg.train.num_epochs

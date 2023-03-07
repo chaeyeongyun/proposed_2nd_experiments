@@ -176,7 +176,7 @@ if __name__ == '__main__':
     parser.add_argument('--config_path', default='./config/test/vgg16_unet_cwfid_test.json')
     opt = parser.parse_args()
     cfg = get_config_from_json(opt.config_path)
-    folders = ['/content/drive/MyDrive/semi_sup_train/CWFID/Unet+U2PL_num30_barlow12/ckpoints', '/content/drive/MyDrive/semi_sup_train/CWFID/Unet+U2PL_num3013/ckpoints']
+    folders = ['/content/drive/MyDrive/semi_sup_train/CWFID/Unet+U2PL_num30_barlow22/ckpoints', '/content/drive/MyDrive/semi_sup_train/CWFID/Unet+U2PL_num30_barlow11/ckpoints', '/content/drive/MyDrive/semi_sup_train/CWFID/Unet+U2PL_num3023/ckpoints']
     for folder in folders:
         cfg.test.weights=folder
         print(cfg)
