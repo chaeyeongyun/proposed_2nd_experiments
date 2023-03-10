@@ -2,6 +2,8 @@ from typing import Iterable
 import torch
 import numpy as np
 import random
+
+
 #TODO: 
 def augmentation(input:torch.Tensor, label:torch.Tensor, logits:torch.Tensor, aug_cfg:dict):
     batch_size = input.shape[0]
@@ -34,33 +36,39 @@ def make_cutout_mask(img_size:Iterable[int], ratio):
     return mask.long()
     
     
-# class CutMix():
-#     def __init__(self, bbox_size:Iterable[int]):
-#         """CutMix augmentation
+class CutMix():
+    def __init__(self, ratio:float):
+        """CutMix augmentation
 
-#         Args:
-#             bbox_size (Iterable[int]): size of bounding box to be cut off. (h, w)
-#         """
-#         self.bbox_size = bbox_size
+        Args:
+            bbox_size (Iterable[int]): size of bounding box to be cut off. (h, w)
+        """
+        self.ratio = ratio
         
-#     def _make_mask(self, img_size:Iterable[int], bbox_size:Iterable[int]):
-#         x1, y1 = random.randint(0, img_size[1]-bbox_size[1]), random.randint(0, img_size[0]-bbox_size[0])
-#         mask = torch.zeros(img_size)
-#         mask[y1:y1+bbox_size[0], x1:x1+bbox_size[1]] = 1
-#         return mask
-    
-#     def __call__(self, img1:torch.Tensor, img2:torch.Tensor):
-#         """
-#         Args:
-#             img1 (torch.Tensor): the image where bounding box will be cut
-#             img2 (torch.Tensor): the image to which bounding box will be attached
-#         """
-#         assert img1.shape == img2.shape, "It's not implemented for this case yet"
-#         h, w = img1.shape[-2:]
-#         mask = self._make_mask((h,w), self.bbox_size) # (H, W)
-#         mask = torch.stack([mask]*img1.shape[1], dim=0) # (C, H, W)
-#         mask = torch.stack([mask]*img1.shape[0], dim=0) # (N, C, H, W)
-#         mixed_img = img1 * mask + img2 * (1 - mask)
-#         return mixed_img
-
-    
+    def _make_mask(self, img_size:Iterable[int], ratio:float):
+        cutout_area = img_size[0]*img_size[1]*ratio
+        cut_w = np.random.randint(int(img_size[1]*ratio)+1, img_size[1])
+        cut_h = int(cutout_area//cut_w)
+        x1, y1 = np.random.randint(0, img_size[1]-cut_w+1), random.randint(0, img_size[0]-cut_h+1)
+        mask = torch.ones(tuple(img_size))
+        mask[y1:y1+cut_h, x1:x1+cut_w] = 0
+        return mask.long()
+        
+    def __call__(self, batch:torch.Tensor):
+        """
+        Args:
+            batch (torch.Tensor): mini-batch of input images
+        """
+        batch_size = batch.shape[0]
+        h, w = batch.shape[-2:]
+        mask = self._make_mask((h,w), self.ratio).to(batch.device) # (H, W)
+        mixed = [(input[i]*mask + input[(i+1)%batch_size]*(1-mask)).unsqueeze(0) for i in range(batch_size)]
+        mixed = torch.cat(mixed, dim=0)
+        return mixed
+###############
+aug_dict = {
+    "cutmix":CutMix
+}
+def make_aug(aug_cfg):
+    aug_name = aug_cfg.pop("name")
+    return aug_dict[aug_name](**aug_cfg)

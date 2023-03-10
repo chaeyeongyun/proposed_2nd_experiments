@@ -40,8 +40,7 @@ def train(cfg):
     
     model_1 = models.make_model(cfg.model.backbone.name, cfg.model.seg_head.name, cfg.model.in_channels, num_classes).to(device)
     model_2 = models.make_model(cfg.model.backbone.name, cfg.model.seg_head.name, cfg.model.in_channels, num_classes).to(device)
-    # TODO: load pretrained weights (only backbone)
-    
+
     # initialize differently (segmentation head)
     if cfg.train.init_weights:
         models.init_weight([model_1.decoder], nn.init.kaiming_normal_,
@@ -67,6 +66,8 @@ def train(cfg):
     lr_scheduler = WarmUpPolyLR(cfg.train.learning_rate, lr_power=cfg.train.lr_scheduler.lr_power, 
                                 total_iters=len(unsup_loader)*num_epochs,
                                 warmup_steps=len(unsup_loader)*cfg.train.lr_scheduler.warmup_epoch)
+    
+    # TODO: different lr
     optimizer_1 = torch.optim.Adam(model_1.parameters(), lr=cfg.train.learning_rate, betas=(0.9, 0.999))
     optimizer_2 = torch.optim.Adam(model_2.parameters(), lr=cfg.train.learning_rate, betas=(0.9, 0.999))
     

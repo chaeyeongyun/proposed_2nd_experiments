@@ -24,15 +24,17 @@ from metrics import Measurement
 
 # 일단 no cutmix version
 def train(cfg):
-    logger_name = cfg.project_name+str(len(os.listdir(cfg.train.save_dir)))
-    save_dir = os.path.join(cfg.train.save_dir, logger_name)
-    os.makedirs(save_dir)
-    ckpoints_dir = os.path.join(save_dir, 'ckpoints')
-    os.mkdir(ckpoints_dir)
-    log_txt = open(os.path.join(save_dir, 'log_txt'), 'w')
-    
+    if cfg.wandb_logging:
+        logger_name = cfg.project_name+str(len(os.listdir(cfg.train.save_dir)))
+        logger = Logger(cfg, logger_name) if cfg.wandb_logging else None
+        wandb.config.update(cfg.train)
+        save_dir = os.path.join(cfg.train.save_dir, logger_name)
+        os.makedirs(save_dir)
+        ckpoints_dir = os.path.join(save_dir, 'ckpoints')
+        os.mkdir(ckpoints_dir)
+        log_txt = open(os.path.join(save_dir, 'log_txt'), 'w')
+        
     half = cfg.train.half
-    logger = Logger(cfg, logger_name) if cfg.wandb_logging else None
     num_classes = cfg.num_classes
     batch_size = cfg.train.batch_size
     num_epochs = cfg.train.num_epochs
@@ -41,7 +43,6 @@ def train(cfg):
     
     model_1 = models.make_model(cfg.model.backbone.name, cfg.model.seg_head.name, cfg.model.in_channels, num_classes).to(device)
     model_2 = models.make_model(cfg.model.backbone.name, cfg.model.seg_head.name, cfg.model.in_channels, num_classes).to(device)
-    # TODO: load pretrained weights (only backbone)
     
     # initialize differently (segmentation head)
     if cfg.train.init_weights:
@@ -55,7 +56,7 @@ def train(cfg):
         model_1.backbone.load_state_dict(torch.load(cfg.model.backbone.pretrain_weights))
         model_2.backbone.load_state_dict(torch.load(cfg.model.backbone.pretrain_weights))
     
-    criterion = make_loss(cfg.train.criterion, num_classes)
+    criterion = make_loss(cfg.train.criterion, num_classes, ignore_index=255)
     
     sup_dataset = BaseDataset(os.path.join(cfg.train.data_dir, 'train'), split='labelled', resize=cfg.resize)
     unsup_dataset = BaseDataset(os.path.join(cfg.train.data_dir, 'train'), split='unlabelled', resize=cfg.resize)
@@ -66,10 +67,27 @@ def train(cfg):
     lr_scheduler = WarmUpPolyLR(cfg.train.learning_rate, lr_power=cfg.train.lr_scheduler.lr_power, 
                                 total_iters=len(unsup_loader)*num_epochs,
                                 warmup_steps=len(unsup_loader)*cfg.train.lr_scheduler.warmup_epoch)
-    optimizer_1 = torch.optim.Adam(model_1.parameters(), lr=cfg.train.learning_rate, betas=(0.9, 0.999))
-    optimizer_2 = torch.optim.Adam(model_2.parameters(), lr=cfg.train.learning_rate, betas=(0.9, 0.999))
     
-    # progress bar
+    decoder_lr_times = cfg.train.get("decoder_lr_times", False)
+    if decoder_lr_times:
+        param_list = []
+        backbone = model_1.backbone
+        decoder = model_1.decoder
+        param_list.append(dict(params=backbone.parameters(), lr=cfg.train.learning_rate))
+        param_list.append(dict(params=decoder.parameters(), lr=cfg.train.learning_rate*decoder_lr_times))
+        optimizer_1 = torch.optim.Adam(param_list, betas=(0.9, 0.999))
+        
+        param_list = []
+        backbone = model_2.backbone
+        decoder = model_2.decoder
+        param_list.append(dict(params=backbone.parameters(), lr=cfg.train.learning_rate))
+        param_list.append(dict(params=decoder.parameters(), lr=cfg.train.learning_rate*decoder_lr_times))
+        optimizer_2 = torch.optim.Adam(param_list, betas=(0.9, 0.999))
+        
+    else:
+        optimizer_1 = torch.optim.Adam(model_1.parameters(), lr=cfg.train.learning_rate, betas=(0.9, 0.999))
+        optimizer_2 = torch.optim.Adam(model_2.parameters(), lr=cfg.train.learning_rate, betas=(0.9, 0.999))
+          # progress bar
     
     
     scaler = torch.cuda.amp.GradScaler(enabled=half)
@@ -145,7 +163,8 @@ def train(cfg):
             print_txt = f"[Epoch{epoch}/{cfg.train.num_epochs}][Iter{batch_idx+1}/{len(unsup_loader)}] lr={learning_rate:.2f}" \
                             + f"miou={step_miou}, sup_loss_1={sup_loss_1:.4f}, sup_loss_2={sup_loss_2:.4f}, cps_loss={cps_loss:.4f}"
             pbar.set_description(print_txt, refresh=False)
-            log_txt.write(print_txt)
+            if logger != None:
+                log_txt.write(print_txt)
         
         ## end epoch ## 
         back_iou, weed_iou, crop_iou = back_iou / len(unsup_loader), weed_iou / len(unsup_loader), crop_iou / len(unsup_loader)
@@ -157,26 +176,28 @@ def train(cfg):
         crop_iou += iou_list[2]
         print_txt = f"[Epoch{epoch}]" \
                             + f"miou=miou, sup_loss_1={sup_loss_1:.4f}, sup_loss_2={sup_loss_2:.4f}, cps_loss={cps_loss:.4f}"
-        log_txt.write(print_txt)
-        if epoch % 10 == 0:
-            save_ckpoints(model_1.state_dict(),
-                          model_2.state_dict(),
-                          epoch,
-                          batch_idx,
-                          optimizer_1.state_dict(),
-                          optimizer_2.state_dict(),
-                          os.path.join(ckpoints_dir, f"{epoch}ep.pth"))
-        # wandb logging
-        if logger is not None:
+        if logger != None:
+            log_txt.write(print_txt)
+        
             for key in logger.config_dict.keys():
                 logger.config_dict[key] = eval(key)
             
             for key in logger.log_dict.keys():
                 logger.log_dict[key] = eval(key)
-            
             logger.logging(epoch=epoch)
             logger.config_update()
-    log_txt.close()
+            
+            if epoch % 10 == 0:
+                save_ckpoints(model_1.state_dict(),
+                            model_2.state_dict(),
+                            epoch,
+                            batch_idx,
+                            optimizer_1.state_dict(),
+                            optimizer_2.state_dict(),
+                            os.path.join(ckpoints_dir, f"{epoch}ep.pth"))
+        # wandb logging
+    if logger is not None:
+        log_txt.close()
     
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

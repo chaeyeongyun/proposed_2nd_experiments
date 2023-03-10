@@ -17,8 +17,9 @@ from utils.env_utils import device_setting
 from utils.processing import img_to_label
 from utils.lr_schedulers import WarmUpPolyLR
 
+
 from data.dataset import BaseDataset
-from data.augmentations import CutMix
+
 from loss import make_loss
 from metrics import Measurement
 
@@ -32,6 +33,7 @@ def train(cfg):
     
     half=cfg.train.half
     logger = Logger(cfg, logger_name) if cfg.wandb_logging else None
+    if logger!=None:wandb.config.update(cfg.train)
     num_classes = cfg.num_classes
     batch_size = cfg.train.batch_size
     num_epochs = cfg.train.num_epochs
@@ -41,7 +43,6 @@ def train(cfg):
     
     model_1 = models.make_model(cfg.model.backbone.name, cfg.model.seg_head.name, cfg.model.in_channels, num_classes).to(device)
     model_2 = models.make_model(cfg.model.backbone.name, cfg.model.seg_head.name, cfg.model.in_channels, num_classes).to(device)
-    # TODO: load pretrained weights (only backbone)
     
     # initialize differently (segmentation head)
     if cfg.train.init_weights:
@@ -52,11 +53,12 @@ def train(cfg):
                         nn.BatchNorm2d, cfg.train.bn_eps, cfg.train.bn_momentum, 
                         mode='fan_in', nonlinearity='relu')
     
+    # load encoder pretrained weight 
     if cfg.model.backbone.pretrain_weights != None: # if you don't want to use pretrain weights, set cfg.model.backbone.pretrain_weights to null
         model_1.backbone.load_state_dict(torch.load(cfg.model.backbone.pretrain_weights))
         model_2.backbone.load_state_dict(torch.load(cfg.model.backbone.pretrain_weights))
     
-    criterion = make_loss(cfg.train.criterion, num_classes)
+    criterion = make_loss(cfg.train.criterion, num_classes, ignore_index=255)
     
     sup_dataset = BaseDataset(os.path.join(cfg.train.data_dir, 'train'), split='labelled', resize=cfg.resize)
     unsup_dataset = BaseDataset(os.path.join(cfg.train.data_dir, 'train'), split='unlabelled', resize=cfg.resize)
@@ -68,8 +70,26 @@ def train(cfg):
     lr_scheduler = WarmUpPolyLR(cfg.train.learning_rate, lr_power=cfg.train.lr_scheduler.lr_power, 
                                 total_iters=len(unsup_loader)*num_epochs,
                                 warmup_steps=len(unsup_loader)*cfg.train.lr_scheduler.warmup_epoch)
-    optimizer_1 = torch.optim.Adam(model_1.parameters(), lr=cfg.train.learning_rate, betas=(0.9, 0.999))
-    optimizer_2 = torch.optim.Adam(model_2.parameters(), lr=cfg.train.learning_rate, betas=(0.9, 0.999))
+    decoder_lr_times = cfg.train.get("decoder_lr_times", False)
+    if decoder_lr_times:
+        param_list = []
+        backbone = model_1.backbone
+        decoder = model_1.decoder
+        param_list.append(dict(params=backbone.parameters(), lr=cfg.train.learning_rate))
+        param_list.append(dict(params=decoder.parameters(), lr=cfg.train.learning_rate*decoder_lr_times))
+        optimizer_1 = torch.optim.Adam(param_list, betas=(0.9, 0.999))
+        
+        param_list = []
+        backbone = model_2.backbone
+        decoder = model_2.decoder
+        param_list.append(dict(params=backbone.parameters(), lr=cfg.train.learning_rate))
+        param_list.append(dict(params=decoder.parameters(), lr=cfg.train.learning_rate*decoder_lr_times))
+        optimizer_2 = torch.optim.Adam(param_list, betas=(0.9, 0.999))
+        
+    else:
+        optimizer_1 = torch.optim.Adam(model_1.parameters(), lr=cfg.train.learning_rate, betas=(0.9, 0.999))
+        optimizer_2 = torch.optim.Adam(model_2.parameters(), lr=cfg.train.learning_rate, betas=(0.9, 0.999))
+        
     
     # progress bar
     cps_loss_weight = cfg.train.cps_loss_weight
@@ -93,6 +113,7 @@ def train(cfg):
             l_input = l_input.to(device)
             l_target = l_target.to(device)
             ul_input = ul_input.to(device)
+     
             with torch.cuda.amp.autocast(enabled=half):
                 pred_sup_1 = model_1(l_input)
                 pred_sup_2 = model_2(l_input)
@@ -177,7 +198,7 @@ def train(cfg):
     
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--config_path', default='./config/train/vgg16_unet_csp_barlow.json')
+    parser.add_argument('--config_path', default='./config/train/vgg16_unet_csp.json')
     opt = parser.parse_args()
     cfg = get_config_from_json(opt.config_path)
     

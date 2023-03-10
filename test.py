@@ -18,6 +18,8 @@ from data.dataset import BaseDataset
 from metrics import Measurement
 
 def test_folder(cfg):
+    weights_list = glob(os.path.join(cfg.test.weights, '*.pth')) 
+    assert len(weights_list)!=0, "There are no .pth files"
     num_classes = cfg.num_classes
     batch_size = cfg.test.batch_size
     # make directories to save results
@@ -36,15 +38,20 @@ def test_folder(cfg):
     f = open(os.path.join(save_dir, 'results.txt'), 'w')
     f.write(f"data_dir:{cfg.test.data_dir}, weights:{cfg.test.weights}, save_dir:{cfg.test.save_dir}")
 
-    weights_list = glob(os.path.join(cfg.test.weights, '*.pth'))
     best_miou = 0
     for weights in weights_list:
-        try:
-            print("Loading model...<model_1>")
-            model.load_state_dict(torch.load(weights)['model_1'])
-        except:
-            print("Loading model...<student>")
-            model.load_state_dict(torch.load(weights)['student'])
+        weight_dict = torch.load(weights)
+        set_name = set(['model_1', 'student'])
+        key_set = set(list(weight_dict.keys()))
+        key = list(set_name & key_set)
+        assert len(key)==1, "weight key is not available"
+        model.load_state_dict(weight_dict[key[0]])
+        # try:
+        #     print("Loading model...<model_1>")
+        #     model.load_state_dict(torch.load(weights)['model_1'])
+        # except:
+        #     print("Loading model...<student>")
+        #     model.load_state_dict(torch.load(weights)['student'])
         model.eval()
         test_acc, test_miou = 0, 0
         test_precision, test_recall, test_f1score = 0, 0, 0
@@ -103,12 +110,18 @@ def test(cfg):
     
     device = device_setting(cfg.test.device)
     model = models.make_model(cfg.model.backbone.name, cfg.model.seg_head.name, cfg.model.in_channels, num_classes).to(device)
-    try:
-        print("Loading model...<model_1>")
-        model.load_state_dict(torch.load(cfg.test.weights)['model_1'])
-    except:
-        print("Loading model...<student>")
-        model.load_state_dict(torch.load(cfg.test.weights)['student'])
+    weight_dict = torch.load(cfg.test.weights)
+    set_name = set(['model_1', 'student'])
+    key_set = set(list(weight_dict.keys()))
+    key = list(set_name & key_set)
+    assert len(key)==1, "weight key is not available"
+    model.load_state_dict(weight_dict[key[0]])
+    # try:
+    #     print("Loading model...<model_1>")
+    #     model.load_state_dict(torch.load(weights)['model_1'])
+    # except:
+    #     print("Loading model...<student>")
+    #     model.load_state_dict(torch.load(weights)['student'])
     test_data = BaseDataset(os.path.join(cfg.test.data_dir, 'test'), split='labelled', resize=cfg.resize)
     testloader = DataLoader(test_data, 1, shuffle=False)
     
@@ -176,7 +189,7 @@ if __name__ == '__main__':
     parser.add_argument('--config_path', default='./config/test/vgg16_unet_cwfid_test.json')
     opt = parser.parse_args()
     cfg = get_config_from_json(opt.config_path)
-    folders = ['/content/drive/MyDrive/semi_sup_train/CWFID/Unet+U2PL_num30_barlow22/ckpoints', '/content/drive/MyDrive/semi_sup_train/CWFID/Unet+U2PL_num30_barlow11/ckpoints', '/content/drive/MyDrive/semi_sup_train/CWFID/Unet+U2PL_num3023/ckpoints']
+    folders = ['/content/drive/MyDrive/semi_sup_train/CWFID/Unet+CSP_num3030/ckpoints', '/content/drive/MyDrive/semi_sup_train/CWFID/Unet+CSP_num30_barlow35/ckpoints']
     for folder in folders:
         cfg.test.weights=folder
         print(cfg)

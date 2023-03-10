@@ -34,6 +34,10 @@
             "weight":1,
             "drop_percent":20
         },
+        "strong_aug":{
+            "name":"cutmix",
+            "ratio":0.2
+        },
         "half":true,
         "init_weights":true,
         "bn_eps":1e-5,

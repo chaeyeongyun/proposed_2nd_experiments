@@ -26,8 +26,11 @@ from loss import make_loss, make_unreliable_weight, compute_contra_memobank_loss
 
 # 일단 no cutmix version
 def train(cfg):
-    logger_name = cfg.project_name+str(len(os.listdir(cfg.train.save_dir)))
+    print(cfg)
     if cfg.wandb_logging:
+        logger_name = cfg.project_name+str(len(os.listdir(cfg.train.save_dir)))
+        logger = Logger(cfg, logger_name) if cfg.wandb_logging else None
+        wandb.config.update(cfg.train)
         save_dir = os.path.join(cfg.train.save_dir, logger_name)
         os.makedirs(save_dir)
         ckpoints_dir = os.path.join(save_dir, 'ckpoints')
@@ -35,8 +38,7 @@ def train(cfg):
         img_dir = os.path.join(save_dir, 'imgs')
         os.mkdir(img_dir)
         log_txt = open(os.path.join(save_dir, 'log_txt'), 'w')
-        logger = Logger(cfg, logger_name) if cfg.wandb_logging else None
-        wandb.config.update(cfg.train)
+    
     half=cfg.train.half
     num_classes = cfg.num_classes
     batch_size = cfg.train.batch_size
@@ -77,7 +79,7 @@ def train(cfg):
                                 total_iters=len(unsup_loader)*num_epochs,
                                 warmup_steps=len(unsup_loader)*cfg.train.lr_scheduler.warmup_epoch)
     ema_decay_origin = cfg.train.ema_decay
-    
+    # TODO: different lr in encoder and decoder ()
     decoder_lr_times = cfg.train.get("decoder_lr_times", False)
     if decoder_lr_times:
         param_list = []
@@ -147,7 +149,7 @@ def train(cfg):
                 pred_ul_teacher = F.softmax(pred_ul_teacher, dim=1)
                 logits_ul_teacher, pseudo_ul = torch.max(pred_ul_teacher, dim=1)
                 # strong augmentation
-                if 'strong_aug' in cfg.train:    
+                if cfg.train.get('strong_aug', False):    
                     ul_input_aug, pseudo_ul_aug, logits_ul_teacher_aug = augmentation(
                         ul_input, pseudo_ul.clone(), logits_ul_teacher.clone(),
                         cfg.train.strong_aug
@@ -336,5 +338,5 @@ if __name__ == "__main__":
     parser.add_argument('--config_path', default='./config/train/u2pl_train_barlow.json')
     opt = parser.parse_args()
     cfg = get_config_from_json(opt.config_path)
-    
+    cfg.train.pop('strong_aug')
     train(cfg)
