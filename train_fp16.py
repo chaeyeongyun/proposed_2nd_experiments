@@ -25,21 +25,22 @@ from metrics import Measurement
 
 # 일단 no cutmix version
 def train(cfg):
-    logger_name = cfg.project_name+str(len(os.listdir(cfg.train.save_dir)))
-    save_dir = os.path.join(cfg.train.save_dir, logger_name)
-    os.makedirs(save_dir)
-    ckpoints_dir = os.path.join(save_dir, 'ckpoints')
-    os.mkdir(ckpoints_dir)
+    if cfg.wandb_logging:
+        logger_name = cfg.project_name+str(len(os.listdir(cfg.train.save_dir)))
+        save_dir = os.path.join(cfg.train.save_dir, logger_name)
+        os.makedirs(save_dir)
+        ckpoints_dir = os.path.join(save_dir, 'ckpoints')
+        os.mkdir(ckpoints_dir)
+        log_txt = open(os.path.join(save_dir, 'log_txt'), 'w')
+    logger = Logger(cfg, logger_name) if cfg.wandb_logging else None
     
     half=cfg.train.half
-    logger = Logger(cfg, logger_name) if cfg.wandb_logging else None
     if logger!=None:wandb.config.update(cfg.train)
     num_classes = cfg.num_classes
     batch_size = cfg.train.batch_size
     num_epochs = cfg.train.num_epochs
     device = device_setting(cfg.train.device)
     measurement = Measurement(num_classes)
-    log_txt = open(os.path.join(save_dir, 'log_txt'), 'w')
     
     model_1 = models.make_model(cfg.model.backbone.name, cfg.model.seg_head.name, cfg.model.in_channels, num_classes).to(device)
     model_2 = models.make_model(cfg.model.backbone.name, cfg.model.seg_head.name, cfg.model.in_channels, num_classes).to(device)
@@ -163,7 +164,8 @@ def train(cfg):
             print_txt = f"[Epoch{epoch}/{cfg.train.num_epochs}][Iter{batch_idx+1}/{len(unsup_loader)}] lr={learning_rate:.2f}" \
                             + f"miou={step_miou}, sup_loss_1={sup_loss_1:.4f}, sup_loss_2={sup_loss_2:.4f}, cps_loss={cps_loss:.4f}"
             pbar.set_description(print_txt, refresh=False)
-            log_txt.write(print_txt)
+            if logger != None:
+                log_txt.write(print_txt)
         
         ## end epoch ## 
         back_iou, weed_iou, crop_iou = back_iou / len(unsup_loader), weed_iou / len(unsup_loader), crop_iou / len(unsup_loader)
@@ -175,17 +177,17 @@ def train(cfg):
         
         print_txt = f"[Epoch{epoch}]" \
                             + f"miou=miou, sup_loss_1={sup_loss_1:.4f}, sup_loss_2={sup_loss_2:.4f}, cps_loss={cps_loss:.4f}"
-        log_txt.write(print_txt)
-        if epoch % 10 == 0:
-            save_ckpoints(model_1.state_dict(),
-                        model_2.state_dict(),
-                        epoch,
-                        batch_idx,
-                        optimizer_1.state_dict(),
-                        optimizer_2.state_dict(),
-                        os.path.join(ckpoints_dir, f"{epoch}ep.pth"))
-        # wandb logging
-        if logger is not None:
+        if logger != None:
+            log_txt.write(print_txt)
+            if epoch % 10 == 0:
+                save_ckpoints(model_1.state_dict(),
+                            model_2.state_dict(),
+                            epoch,
+                            batch_idx,
+                            optimizer_1.state_dict(),
+                            optimizer_2.state_dict(),
+                            os.path.join(ckpoints_dir, f"{epoch}ep.pth"))
+            # wandb logging
             for key in logger.config_dict.keys():
                 logger.config_dict[key] = eval(key)
             
@@ -194,11 +196,11 @@ def train(cfg):
             
             logger.logging(epoch=epoch)
             logger.config_update()
-    log_txt.close()
+    if logger != None: log_txt.close()
     
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--config_path', default='./config/train/vgg16_unet_csp.json')
+    parser.add_argument('--config_path', default='./config/train/resnet50_deeplab_csp.json')
     opt = parser.parse_args()
     cfg = get_config_from_json(opt.config_path)
     
