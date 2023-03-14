@@ -186,12 +186,13 @@ def main(cfg):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--config_path', default='./config/test/vgg16_unet_cwfid_test.json')
+    parser.add_argument('--config_path', default='./config/test/deeplabv3_cwfid_test.json')
     opt = parser.parse_args()
     cfg = get_config_from_json(opt.config_path)
-    folders = ['/content/drive/MyDrive/semi_sup_train/CWFID/Unet+CSP_num30_trainver2_barlow39/ckpoints']
-    for folder in folders:
-        cfg.test.weights=folder
-        print(cfg)
-        main(cfg)
+    main(cfg)
+    # folders = ['/content/drive/MyDrive/semi_sup_train/CWFID/Unet+CSP_num30_trainver2_barlow39/ckpoints']
+    # for folder in folders:
+    #     cfg.test.weights=folder
+    #     print(cfg)
+    #     main(cfg)
    

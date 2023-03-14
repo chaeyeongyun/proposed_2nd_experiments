@@ -482,7 +482,7 @@ class ResNet50(nn.Module):
 
 ## VGG16
 class VGG16(nn.Module):
-    def __init__(self, in_channels):
+    def __init__(self, in_channels=3):
         super(VGG16, self).__init__()
         # input image size (N, 3, 224, 224)
         # after maxpooling layer, h and w are devided by 2 : 224->112->56->28->14->7

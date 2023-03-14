@@ -1,0 +1,25 @@
+{
+    "num_classes":3,
+    "pixel_to_label":{
+        "0":0,
+        "128":1,
+        "255":2
+    },
+    "resize":512,
+    "model":{
+        "in_channels":3,
+        "backbone":{
+            "name":"resnet50"
+
+        },
+        "seg_head":{
+            "name":"deeplabv3_plus"
+        }},
+    "test":{
+        "data_dir":"/content/data/semi_sup_data/CWFID/num30",
+        "save_dir":"/content/drive/MyDrive/semi_sup_test/CWFID",
+        "device":0,
+        "batch_size":1,
+        "weights":"/content/drive/MyDrive/semi_sup_train/CWFID/Deeplabv3_plus+CSP_num3041/ckpoints"
+    }
+}
